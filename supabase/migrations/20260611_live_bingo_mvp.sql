@@ -1,4 +1,5 @@
-create extension if not exists pgcrypto;
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
 
 create table if not exists public.lobbies (
   id uuid primary key default gen_random_uuid(),
@@ -103,7 +104,7 @@ create or replace function public._random_lobby_code()
 returns text
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = public, extensions, pg_temp
 as $$
 declare
   alphabet constant text := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -121,7 +122,7 @@ create or replace function public._new_host_token()
 returns text
 language sql
 security definer
-set search_path = public, pg_temp
+set search_path = public, extensions, pg_temp
 as $$
   select encode(gen_random_bytes(32), 'base64');
 $$;
@@ -130,7 +131,7 @@ create or replace function public._token_matches(p_token text, p_hash text)
 returns boolean
 language sql
 security definer
-set search_path = public, pg_temp
+set search_path = public, extensions, pg_temp
 as $$
   select p_token is not null
      and p_hash is not null
@@ -141,7 +142,7 @@ create or replace function public.create_lobby(p_name text, p_host_password text
 returns table(lobby_code text, lobby_id uuid, draw_id uuid, host_token text)
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = public, extensions, pg_temp
 as $$
 declare
   v_code text;
@@ -192,7 +193,7 @@ create or replace function public.claim_host(p_lobby_code text, p_host_password 
 returns table(lobby_id uuid, draw_id uuid, host_token text)
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = public, extensions, pg_temp
 as $$
 declare
   v_lobby public.lobbies%rowtype;
@@ -237,7 +238,7 @@ create or replace function public.renew_host_lock(p_draw_id uuid, p_host_token t
 returns boolean
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = public, extensions, pg_temp
 as $$
 declare
   v_hash text;
@@ -264,7 +265,7 @@ create or replace function public.draw_next_number(p_draw_id uuid, p_host_token 
 returns table(number integer, event_index integer)
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = public, extensions, pg_temp
 as $$
 declare
   v_draw public.draws%rowtype;
@@ -322,7 +323,7 @@ create or replace function public.close_draw_and_create_new(p_lobby_id uuid, p_d
 returns table(lobby_id uuid, old_draw_id uuid, new_draw_id uuid, host_token text)
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = public, extensions, pg_temp
 as $$
 declare
   v_draw public.draws%rowtype;
@@ -384,7 +385,7 @@ create or replace function public.get_lobby_state(p_lobby_code text)
 returns jsonb
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = public, extensions, pg_temp
 as $$
 declare
   v_lobby public.lobbies%rowtype;
