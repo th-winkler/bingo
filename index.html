@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bingo Online 2026 - Rotary Club Rukapillán</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <canvas id="confetti" aria-hidden="true"></canvas>
+    <main class="app-shell">
+      <section class="stage" aria-labelledby="app-title">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Evento online</p>
+            <h1 id="app-title">Bingo Online 2026 - Rotary Club Rukapillán</h1>
+          </div>
+          <details id="sessionPanel" class="session-panel" hidden>
+            <summary class="session-summary" aria-label="Código de lobby y toma de control">
+              <span class="mode-pill" id="modePill">Solo lectura</span>
+              <span class="lobby-code-chip">Código de lobby <strong id="lobbyCodeLabel">------</strong></span>
+              <span class="dropdown-arrow" aria-hidden="true">⌄</span>
+            </summary>
+            <div class="takeover-menu">
+              <small id="lobbyNameLabel"></small>
+              <form id="claimHostForm" class="claim-form">
+                <label>
+                  Contraseña del anfitrión
+                  <input id="claimPasswordInput" type="password" autocomplete="current-password" placeholder="Tomar control">
+                </label>
+                <button class="ghost-action light" type="submit">Tomar control</button>
+              </form>
+            </div>
+          </details>
+          <div class="topbar-controls">
+            <div class="status-card" aria-live="polite">
+              <span id="remainingCount">75</span>
+              <small>números restantes</small>
+            </div>
+            <details class="history-dropdown">
+              <summary>Historial de resultados</summary>
+              <div class="history-menu" aria-labelledby="history-title">
+                <div class="history-menu-header">
+                  <h2 id="history-title">Historial de resultados</h2>
+                  <button id="copyButton" class="copy-action" type="button">Copiar</button>
+                </div>
+                <ol id="historyBody" class="history-list">
+                  <li class="empty-cell">Esperando el primer número</li>
+                </ol>
+              </div>
+            </details>
+          </div>
+        </header>
+
+        <section class="result-hero" aria-label="Resultado actual">
+          <div class="glow-ring" aria-hidden="true"></div>
+          <div id="currentBall" class="bingo-ball is-idle">
+            <span class="ball-letter">?</span>
+            <strong class="ball-number">--</strong>
+          </div>
+          <div class="result-copy">
+            <p id="segmentLabel">Listo para sortear</p>
+            <h2 id="resultText">Presiona sortear</h2>
+          </div>
+          <div class="action-row">
+            <button id="drawButton" class="primary-action" type="button">
+              Sacar número
+            </button>
+            <button id="resetButton" class="ghost-action" type="button">
+              Nuevo sorteo
+            </button>
+          </div>
+        </section>
+
+        <section class="rolling-panel" aria-labelledby="rolling-title">
+          <div class="section-heading">
+            <h2 id="rolling-title">Últimos 3 resultados</h2>
+          </div>
+          <ol id="rollingResults" class="rolling-list">
+            <li class="empty">Todavía no hay resultados</li>
+          </ol>
+        </section>
+
+        <section class="board-panel" aria-labelledby="board-title">
+          <div class="section-heading">
+            <h2 id="board-title">Segmentos</h2>
+            <span>B 1-15 · I 16-30 · N 31-45 · G 46-60 · O 61-75</span>
+          </div>
+          <div id="segmentBoard" class="segment-board"></div>
+        </section>
+      </section>
+
+      <section id="lobbyOverlay" class="lobby-overlay" aria-labelledby="lobby-title" role="dialog" aria-modal="true">
+        <div class="lobby-panel">
+          <div class="lobby-copy">
+            <p class="eyebrow">Lobby en vivo</p>
+            <h2 id="lobby-title">Crear o unirse a un sorteo</h2>
+            <p id="lobbyStatus" class="lobby-status">Esperando configuración de Supabase…</p>
+          </div>
+          <div class="lobby-actions" id="welcomeActions">
+            <form id="createLobbyForm" class="lobby-form">
+              <h3>Crear lobby</h3>
+              <label>
+                Nombre del lobby
+                <input id="lobbyNameInput" name="name" type="text" autocomplete="off" required placeholder="Bingo Rotary">
+              </label>
+              <label>
+                Contraseña del anfitrión
+                <input id="hostPasswordInput" name="password" type="password" autocomplete="new-password" required minlength="4">
+              </label>
+              <button class="primary-action" type="submit">Crear lobby</button>
+            </form>
+            <form id="joinLobbyForm" class="lobby-form">
+              <h3>Unirse a lobby</h3>
+              <label>
+                Código de lobby
+                <input id="joinCodeInput" name="code" type="text" autocomplete="off" required placeholder="ABC123">
+              </label>
+              <button class="ghost-action light" type="submit">Unirse a lobby</button>
+            </form>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./supabaseConfig.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
