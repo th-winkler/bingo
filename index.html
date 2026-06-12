@@ -14,34 +14,37 @@
     <main class="app-shell">
       <section class="stage" aria-labelledby="app-title">
         <header class="topbar">
-          <div>
-            <p class="eyebrow">Evento online</p>
+          <div class="event-title-block">
+            <details id="rolePanel" class="role-panel">
+              <summary class="eyebrow role-badge viewer" id="roleEyebrow">Espectador</summary>
+              <div class="role-menu">
+                <small id="lobbyNameLabel">Contraseña del anfitrión</small>
+                <form id="claimHostForm" class="claim-form">
+                  <label>
+                    Contraseña
+                    <input id="claimPasswordInput" type="password" autocomplete="current-password" placeholder="Tomar control">
+                  </label>
+                  <button class="ghost-action light" type="submit">Tomar control</button>
+                </form>
+              </div>
+            </details>
             <h1 id="app-title">Bingo Online 2026 - Rotary Club Rukapillán</h1>
           </div>
-          <details id="sessionPanel" class="session-panel" hidden>
-            <summary class="session-summary" aria-label="Código de lobby y toma de control">
-              <span class="mode-pill" id="modePill">Solo lectura</span>
-              <span class="lobby-code-chip">Código de lobby <strong id="lobbyCodeLabel">------</strong></span>
-              <span class="dropdown-arrow" aria-hidden="true">⌄</span>
-            </summary>
-            <div class="takeover-menu">
-              <small id="lobbyNameLabel"></small>
-              <form id="claimHostForm" class="claim-form">
-                <label>
-                  Contraseña del anfitrión
-                  <input id="claimPasswordInput" type="password" autocomplete="current-password" placeholder="Tomar control">
-                </label>
-                <button class="ghost-action light" type="submit">Tomar control</button>
-              </form>
-            </div>
-          </details>
+          <button id="resetButton" class="reset-action" type="button">
+            Reiniciar sorteo
+          </button>
+          <button id="sessionPanel" class="session-panel" type="button" hidden aria-label="Cambiar sala">
+            <span class="session-summary">
+              <span class="lobby-code-chip">Código de Sala <strong id="lobbyCodeLabel">------</strong></span>
+            </span>
+          </button>
           <div class="topbar-controls">
             <div class="status-card" aria-live="polite">
               <span id="remainingCount">75</span>
               <small>números restantes</small>
             </div>
             <details class="history-dropdown">
-              <summary>Historial de resultados</summary>
+              <summary><span class="history-arrow" aria-hidden="true">▼</span> Historial de resultados</summary>
               <div class="history-menu" aria-labelledby="history-title">
                 <div class="history-menu-header">
                   <h2 id="history-title">Historial de resultados</h2>
@@ -57,21 +60,19 @@
 
         <section class="result-hero" aria-label="Resultado actual">
           <div class="glow-ring" aria-hidden="true"></div>
-          <div id="currentBall" class="bingo-ball is-idle">
+          <div id="currentBall" class="bingo-ball is-idle" role="button" tabindex="0" aria-label="Sacar número">
             <span class="ball-letter">?</span>
             <strong class="ball-number">--</strong>
           </div>
           <div class="result-copy">
             <p id="segmentLabel">Listo para sortear</p>
-            <h2 id="resultText">Presiona sortear</h2>
+            <h2 id="resultText">¡Presiona la bola para sortear!</h2>
           </div>
           <div class="action-row">
             <button id="drawButton" class="primary-action" type="button">
               Sacar número
             </button>
-            <button id="resetButton" class="ghost-action" type="button">
-              Nuevo sorteo
-            </button>
+
           </div>
         </section>
 
@@ -96,30 +97,30 @@
       <section id="lobbyOverlay" class="lobby-overlay" aria-labelledby="lobby-title" role="dialog" aria-modal="true">
         <div class="lobby-panel">
           <div class="lobby-copy">
-            <p class="eyebrow">Lobby en vivo</p>
+            <p class="eyebrow">Sala en vivo</p>
             <h2 id="lobby-title">Crear o unirse a un sorteo</h2>
             <p id="lobbyStatus" class="lobby-status">Esperando configuración de Supabase…</p>
           </div>
           <div class="lobby-actions" id="welcomeActions">
             <form id="createLobbyForm" class="lobby-form">
-              <h3>Crear lobby</h3>
+              <h3>Crear sala</h3>
               <label>
-                Nombre del lobby
+                Nombre de la sala
                 <input id="lobbyNameInput" name="name" type="text" autocomplete="off" required placeholder="Bingo Rotary">
               </label>
               <label>
                 Contraseña del anfitrión
                 <input id="hostPasswordInput" name="password" type="password" autocomplete="new-password" required minlength="4">
               </label>
-              <button class="primary-action" type="submit">Crear lobby</button>
+              <button class="primary-action" type="submit">Crear sala</button>
             </form>
             <form id="joinLobbyForm" class="lobby-form">
-              <h3>Unirse a lobby</h3>
+              <h3>Unirse a sala</h3>
               <label>
-                Código de lobby
+                Código de sala
                 <input id="joinCodeInput" name="code" type="text" autocomplete="off" required placeholder="ABC123">
               </label>
-              <button class="ghost-action light" type="submit">Unirse a lobby</button>
+              <button class="ghost-action light" type="submit">Unirse a sala</button>
             </form>
           </div>
         </div>

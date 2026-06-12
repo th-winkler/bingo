@@ -8,6 +8,9 @@ const SEGMENTS = [
 
 const HOST_TOKEN_PREFIX = "bingo.hostToken.";
 const LOCK_RENEW_MS = 30000;
+const DRAW_SUSPENSE_MS = 4600;
+const DRAW_REVEAL_SETTLE_MS = 850;
+const LAUNCH_COUNT_SCHEDULE = [5, 4, 3, 2, 1, 0];
 
 const state = {
   mode: "viewer",
@@ -19,6 +22,11 @@ const state = {
   channel: null,
   lockTimer: null,
   lastRenderedNumber: null,
+  lastRenderedDrawSignature: "",
+  subscribedDrawId: null,
+  loadingState: false,
+  drawAnimating: false,
+  drawCycleTimer: null,
 };
 
 const els = {
@@ -40,10 +48,13 @@ const els = {
   lobbyNameLabel: document.getElementById("lobbyNameLabel"),
   lobbyOverlay: document.getElementById("lobbyOverlay"),
   lobbyStatus: document.getElementById("lobbyStatus"),
-  modePill: document.getElementById("modePill"),
+  rolePanel: document.getElementById("rolePanel"),
+  roleEyebrow: document.getElementById("roleEyebrow"),
+  appTitle: document.getElementById("app-title"),
   remainingCount: document.getElementById("remainingCount"),
   resetButton: document.getElementById("resetButton"),
   resultText: document.getElementById("resultText"),
+  resultHero: document.querySelector(".result-hero"),
   rollingResults: document.getElementById("rollingResults"),
   segmentBoard: document.getElementById("segmentBoard"),
   segmentLabel: document.getElementById("segmentLabel"),
@@ -135,10 +146,12 @@ function readHashState() {
 function setMode(mode) {
   state.mode = mode === "host" ? "host" : "viewer";
   const isHost = state.mode === "host" && Boolean(state.hostToken);
-  els.modePill.textContent = isHost ? "Anfitrión" : "Solo lectura";
-  els.modePill.className = `mode-pill ${isHost ? "host" : "viewer"}`;
+  els.roleEyebrow.textContent = isHost ? "Anfitrión" : "Espectador";
+  els.roleEyebrow.className = `eyebrow role-badge ${isHost ? "host" : "viewer"}`;
   els.claimHostForm.hidden = isHost;
-  if (isHost && els.sessionPanel.open) els.sessionPanel.open = false;
+  els.lobbyNameLabel.textContent = isHost
+    ? "Ya tienes control de anfitrión"
+    : "Introduce la contraseña para tomar control";
   render();
 }
 
@@ -149,6 +162,15 @@ function setIdleBall(message = "Esperando nuevo número…") {
   els.ballNumber.textContent = "--";
   els.resultText.textContent = message;
   els.segmentLabel.textContent = state.draw?.status === "closed" ? "Sorteo cerrado" : "Listo para sortear";
+}
+
+function drawSignature(items = state.drawn) {
+  return items.map((item) => `${item.eventIndex}:${item.number}`).join("|");
+}
+
+function shouldAnimateLatestNumber(previousDrawId, previousLatest, latest, force = false) {
+  if (!latest || !state.draw || previousDrawId !== state.draw.id) return false;
+  return force || latest.eventIndex !== previousLatest;
 }
 
 function renderCurrentBall(animate = false) {
@@ -184,7 +206,6 @@ function render() {
   els.drawButton.disabled = !isConfigured || !isHost || !isActive || remaining <= 0;
   els.resetButton.disabled = !isConfigured || !isHost || !isActive;
   els.drawButton.textContent = remaining <= 0 ? "Todos los números ya fueron sorteados" : "Sacar número";
-  els.resetButton.textContent = "Nuevo sorteo";
   els.resetButton.hidden = !isHost;
 
   renderRollingResults();
@@ -193,6 +214,10 @@ function render() {
 }
 
 function renderRollingResults() {
+  const signature = drawSignature();
+  if (signature === state.lastRenderedDrawSignature) return;
+  state.lastRenderedDrawSignature = signature;
+
   const latest = state.drawn.slice(0, 3);
 
   if (!latest.length) {
@@ -263,19 +288,20 @@ function renderFromCloudState(cloudState, { animateLatest = false } = {}) {
 
   els.lobbyOverlay.hidden = true;
   els.sessionPanel.hidden = false;
+  els.rolePanel.hidden = false;
   els.lobbyCodeLabel.textContent = state.lobby.lobby_code;
-  els.lobbyNameLabel.textContent = state.lobby.name;
+  els.appTitle.textContent = state.lobby.name || "Bingo Online 2026 - Rotary Club Rukapillán";
 
   const latest = state.drawn[0];
-  const shouldAnimate = animateLatest || (latest && previousDrawId === state.draw.id && latest.eventIndex !== previousLatest);
-  renderCurrentBall(Boolean(shouldAnimate && latest));
+  const shouldAnimate = shouldAnimateLatestNumber(previousDrawId, previousLatest, latest, animateLatest);
+  renderCurrentBall(Boolean(shouldAnimate));
 
   if (state.draw.status === "closed") {
     setStatus("Sorteo cerrado. Esperando nuevo sorteo…");
   } else if (state.mode === "host" && state.hostToken) {
-    setStatus(`Lobby activo ${state.lobby.lobby_code}. Comparte este código con los jugadores.`);
+    setStatus(`Sala activa ${state.lobby.lobby_code}. Comparte este código con los jugadores.`);
   } else {
-    setStatus("Solo lectura. Esperando nuevo número…");
+    setStatus("Espectador. Esperando nuevo número…");
   }
 
   setMode(state.mode);
@@ -283,17 +309,24 @@ function renderFromCloudState(cloudState, { animateLatest = false } = {}) {
 
 async function loadLobbyState(lobbyCode, options = {}) {
   requireSupabase();
-  const code = normalizeCode(lobbyCode);
-  const { data, error } = await supabaseClient.rpc("get_lobby_state", { p_lobby_code: code });
-  if (error) throw error;
-  renderFromCloudState(data, options);
-  subscribeToLobby(state.draw.id);
-  return data;
+  if (state.drawAnimating && !options.allowDuringDraw) return null;
+  if (state.loadingState) return null;
+  state.loadingState = true;
+  try {
+    const code = normalizeCode(lobbyCode);
+    const { data, error } = await supabaseClient.rpc("get_lobby_state", { p_lobby_code: code });
+    if (error) throw error;
+    renderFromCloudState(data, options);
+    subscribeToLobby(state.draw.id);
+    return data;
+  } finally {
+    state.loadingState = false;
+  }
 }
 
 async function createLobby(name, hostPassword) {
   requireSupabase();
-  setStatus("Creando lobby…");
+  setStatus("Creando sala…");
   const { data, error } = await supabaseClient.rpc("create_lobby", {
     p_name: name,
     p_host_password: hostPassword,
@@ -339,21 +372,212 @@ async function claimHost(lobbyCode, hostPassword) {
   startHostLockRenewal();
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function getLaunchedBallCount(completedDraws) {
+  const scheduleIndex = Math.min(
+    Math.floor(completedDraws / 14),
+    LAUNCH_COUNT_SCHEDULE.length - 1
+  );
+  return LAUNCH_COUNT_SCHEDULE[scheduleIndex];
+}
+
+function chooseCycleNumber(availableNumbers) {
+  if (!availableNumbers.length) return null;
+  return availableNumbers[secureRandomInt(availableNumbers.length)];
+}
+
+function renderBallCandidate(number) {
+  const segment = getSegment(number);
+  if (!segment) return;
+  els.ball.className = `bingo-ball is-randomizing ${segment.theme}`;
+  els.ball.style.background = segment.color;
+  els.ballLetter.textContent = segment.letter;
+  els.ballNumber.textContent = number;
+  els.resultText.textContent = formatResult(number);
+  els.segmentLabel.textContent = "Seleccionando número…";
+}
+
+function createLaunchedBallLayer(completedDraws) {
+  els.resultHero.querySelector(".launched-ball-layer")?.remove();
+  const count = getLaunchedBallCount(completedDraws);
+  const layer = document.createElement("div");
+  layer.className = "launched-ball-layer";
+  layer.setAttribute("aria-hidden", "true");
+
+  for (let index = 0; index < count; index += 1) {
+    const number = chooseCycleNumber(state.pool) || index + 1;
+    const segment = getSegment(number) || SEGMENTS[index % SEGMENTS.length];
+    const ball = document.createElement("span");
+    ball.className = `launched-ball ${segment.theme}`;
+    ball.textContent = formatResult(number);
+    ball.style.setProperty("--ball-color", segment.color);
+    ball.style.setProperty("--delay", `${index * 0.34 + secureRandomInt(18) / 100}s`);
+    ball.style.setProperty("--duration", `${4.15 + secureRandomInt(70) / 100}s`);
+    ball.style.setProperty("--start-y", `${72 + secureRandomInt(16)}%`);
+    ball.style.setProperty("--peak-y", `${40 + secureRandomInt(18)}%`);
+    ball.style.setProperty("--drift", `${secureRandomInt(46) - 23}px`);
+    ball.style.setProperty("--spin", `${240 + secureRandomInt(260)}deg`);
+    ball.style.setProperty("--mid-spin", `${120 + secureRandomInt(160)}deg`);
+
+    const lanePositions = count <= 1
+      ? [18]
+      : [12, 24, 72, 84, 7].slice(0, count);
+    const lane = lanePositions[index] ?? (index % 2 ? 82 : 18);
+    ball.style.left = `${Math.max(6, Math.min(88, lane + secureRandomInt(8) - 4))}%`;
+    layer.appendChild(ball);
+  }
+
+  els.resultHero.appendChild(layer);
+  return layer;
+}
+
+function stopDrawCycle() {
+  if (state.drawCycleTimer) {
+    window.clearTimeout(state.drawCycleTimer);
+    state.drawCycleTimer = null;
+  }
+}
+
+function startNumberCycle(availableNumbers) {
+  const startedAt = performance.now();
+  let tick = 0;
+
+  const cycle = () => {
+    const elapsed = performance.now() - startedAt;
+    const progress = Math.min(elapsed / DRAW_SUSPENSE_MS, 1);
+    const number = chooseCycleNumber(availableNumbers);
+    if (number) renderBallCandidate(number);
+
+    if (progress >= 1 || !state.drawAnimating) {
+      state.drawCycleTimer = null;
+      return;
+    }
+
+    tick += 1;
+    const interval = 48 + Math.pow(progress, 2.45) * 360 + Math.min(tick, 10) * 2;
+    state.drawCycleTimer = window.setTimeout(cycle, interval);
+  };
+
+  cycle();
+}
+
+function beginDrawSuspense(completedDraws) {
+  stopDrawCycle();
+  state.drawAnimating = true;
+  els.resultHero.classList.add("is-draw-active");
+  els.ball.classList.add("is-randomizing");
+  createLaunchedBallLayer(completedDraws);
+  startNumberCycle(state.pool);
+}
+
+async function revealDrawResult({ finalNumber, finalEventIndex }) {
+  stopDrawCycle();
+
+  const segment = getSegment(finalNumber);
+  if (segment) {
+    els.ball.className = `bingo-ball is-revealing ${segment.theme}`;
+    els.ball.style.background = segment.color;
+    els.ballLetter.textContent = segment.letter;
+    els.ballNumber.textContent = finalNumber;
+    els.resultText.textContent = formatResult(finalNumber);
+    els.segmentLabel.textContent = `Resultado #${finalEventIndex}`;
+    burstConfetti(segment.color);
+  }
+
+  await sleep(DRAW_REVEAL_SETTLE_MS);
+  els.resultHero.classList.remove("is-draw-active");
+  els.resultHero.querySelector(".launched-ball-layer")?.remove();
+  state.drawAnimating = false;
+}
+
 async function drawNextNumber() {
   requireSupabase();
-  if (!state.draw || !state.hostToken) return;
+  if (!state.draw || !state.hostToken || els.drawButton.disabled || state.drawAnimating) return;
+
+  const completedDraws = state.drawn.length;
   els.drawButton.disabled = true;
-  setStatus("Sacando número…");
-  const { error } = await supabaseClient.rpc("draw_next_number", {
+  setStatus("Sorteando número…");
+
+  const rpcPromise = supabaseClient.rpc("draw_next_number", {
     p_draw_id: state.draw.id,
     p_host_token: state.hostToken,
   });
-  if (error) {
+
+  try {
+    beginDrawSuspense(completedDraws);
+    const [{ data, error }] = await Promise.all([
+      rpcPromise,
+      sleep(DRAW_SUSPENSE_MS),
+    ]);
+    if (error) throw error;
+
+    const row = firstRpcRow(data);
+    await revealDrawResult({
+      finalNumber: Number(row.number),
+      finalEventIndex: Number(row.event_index),
+    });
+    await loadLobbyState(state.lobby.lobby_code, { animateLatest: false, allowDuringDraw: true });
+  } catch (error) {
+    stopDrawCycle();
+    state.drawAnimating = false;
+    els.resultHero.classList.remove("is-draw-active");
+    els.resultHero.querySelector(".launched-ball-layer")?.remove();
     setStatus(error.message || "No se pudo sacar número", true);
+    renderCurrentBall(false);
     render();
-    return;
   }
-  await loadLobbyState(state.lobby.lobby_code, { animateLatest: true });
+}
+
+function drawFromBall(event) {
+  if (event.type === "keydown" && !["Enter", " "].includes(event.key)) return;
+  event.preventDefault();
+  drawNextNumber();
+}
+
+function closeDropdownsOnOutsideClick(event) {
+  const path = event.composedPath ? event.composedPath() : [];
+  for (const details of document.querySelectorAll("details[open]")) {
+    if (!path.includes(details)) details.open = false;
+  }
+}
+
+function returnToLobbySelector() {
+  if (!state.lobby) return;
+  const wantsChange = confirm("¿Quieres cambiar de sala? Volverás a la pantalla inicial para crear o unirte a otra sala.");
+  if (!wantsChange) return;
+
+  if (state.lockTimer) {
+    window.clearInterval(state.lockTimer);
+    state.lockTimer = null;
+  }
+  if (state.channel && supabaseClient) {
+    supabaseClient.removeChannel(state.channel);
+  }
+
+  state.mode = "viewer";
+  state.lobby = null;
+  state.draw = null;
+  state.drawn = [];
+  state.pool = Array.from({ length: 75 }, (_, index) => index + 1);
+  state.hostToken = null;
+  state.channel = null;
+  state.lastRenderedNumber = null;
+  state.lastRenderedDrawSignature = "";
+  state.subscribedDrawId = null;
+
+  history.replaceState(null, "", `${location.pathname}${location.search}`);
+  els.sessionPanel.hidden = true;
+  els.resetButton.hidden = true;
+  els.lobbyOverlay.hidden = false;
+  els.appTitle.textContent = "Bingo Online 2026 - Rotary Club Rukapillán";
+  els.lobbyCodeLabel.textContent = "------";
+  els.joinCodeInput.focus();
+  setIdleBall("¡Presiona la bola para sortear!");
+  setStatus("Listo: crea una sala o únete con un código.");
+  setMode("viewer");
 }
 
 async function closeAndStartNewDraw() {
@@ -369,7 +593,10 @@ async function closeAndStartNewDraw() {
     p_host_token: state.hostToken,
   });
   if (error) {
-    setStatus(error.message || "No se pudo crear nuevo sorteo", true);
+    const message = error.message || "No se pudo crear nuevo sorteo";
+    console.error("close_draw_and_create_new failed", error);
+    setStatus(message, true);
+    alert(message);
     render();
     return;
   }
@@ -379,36 +606,52 @@ async function closeAndStartNewDraw() {
   sessionStorage.setItem(tokenKey(code), row.host_token);
   state.hostToken = row.host_token;
   state.lastRenderedNumber = null;
+  state.lastRenderedDrawSignature = "";
   await loadLobbyState(code);
   startHostLockRenewal();
 }
 
 function subscribeToLobby(drawId) {
   if (!supabaseClient || !state.lobby || !drawId) return;
+  if (state.channel && state.subscribedDrawId === drawId) return;
   if (state.channel) supabaseClient.removeChannel(state.channel);
+  state.subscribedDrawId = drawId;
+
+  const reload = (options = {}) => loadLobbyState(state.lobby.lobby_code, options).catch((error) => setStatus(error.message, true));
 
   state.channel = supabaseClient
-    .channel(`bingo-lobby-${state.lobby.id}`)
+    .channel(`bingo-lobby-${state.lobby.id}-${drawId}`)
     .on("postgres_changes", {
       event: "INSERT",
       schema: "public",
       table: "draw_events",
       filter: `draw_id=eq.${drawId}`,
-    }, () => loadLobbyState(state.lobby.lobby_code).catch((error) => setStatus(error.message, true)))
+    }, () => reload())
     .on("postgres_changes", {
       event: "*",
       schema: "public",
       table: "draws",
       filter: `lobby_id=eq.${state.lobby.id}`,
-    }, () => loadLobbyState(state.lobby.lobby_code).catch((error) => setStatus(error.message, true)))
+    }, (payload) => {
+      const next = payload?.new || {};
+      const previous = payload?.old || {};
+      const meaningful = payload.eventType === "INSERT"
+        || next.id !== previous.id
+        || next.status !== previous.status
+        || next.current_count !== previous.current_count
+        || next.last_number !== previous.last_number;
+      if (meaningful) reload();
+    })
     .on("postgres_changes", {
       event: "UPDATE",
       schema: "public",
       table: "lobbies",
       filter: `id=eq.${state.lobby.id}`,
-    }, () => loadLobbyState(state.lobby.lobby_code).catch((error) => setStatus(error.message, true)))
+    }, (payload) => {
+      if (!payload?.new || payload.new.active_draw_id !== state.draw?.id) reload();
+    })
     .subscribe((status) => {
-      if (status === "SUBSCRIBED") setStatus(state.mode === "host" ? `Lobby activo ${state.lobby.lobby_code}` : "Solo lectura. Esperando nuevo número…");
+      if (status === "SUBSCRIBED") setStatus(state.mode === "host" ? `Sala activa ${state.lobby.lobby_code}` : "Espectador. Esperando nuevo número…");
     });
 }
 
@@ -566,8 +809,12 @@ els.claimHostForm.addEventListener("submit", async (event) => {
 });
 
 els.drawButton.addEventListener("click", drawNextNumber);
+els.ball.addEventListener("click", drawFromBall);
+els.ball.addEventListener("keydown", drawFromBall);
 els.resetButton.addEventListener("click", closeAndStartNewDraw);
+els.sessionPanel.addEventListener("click", returnToLobbySelector);
 els.copyButton.addEventListener("click", copyResults);
+document.addEventListener("click", closeDropdownsOnOutsideClick);
 window.addEventListener("resize", resizeConfettiCanvas);
 
 window.createLobby = createLobby;
@@ -575,19 +822,20 @@ window.joinLobby = joinLobby;
 window.claimHost = claimHost;
 window.drawNextNumber = drawNextNumber;
 window.closeAndStartNewDraw = closeAndStartNewDraw;
+window.getLaunchedBallCount = getLaunchedBallCount;
 window.loadLobbyState = loadLobbyState;
 window.subscribeToLobby = subscribeToLobby;
 window.renderFromCloudState = renderFromCloudState;
 window.setMode = setMode;
 
 resizeConfettiCanvas();
-setIdleBall("Esperando nuevo número…");
+setIdleBall("¡Presiona la bola para sortear!");
 render();
 
 if (!supabaseClient) {
-  setStatus("Configura Supabase URL y anon key en supabaseConfig.js para activar lobbies en vivo.", true);
+  setStatus("Configura Supabase URL y anon key en supabaseConfig.js para activar salas en vivo.", true);
 } else {
-  setStatus("Listo: crea un lobby o únete con un código.");
+  setStatus("Listo: crea una sala o únete con un código.");
   const boot = readHashState();
   if (boot.lobby) {
     joinLobby(boot.lobby).then(() => {

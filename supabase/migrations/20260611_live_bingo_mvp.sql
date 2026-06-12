@@ -38,7 +38,7 @@ create table if not exists public.draw_events (
   event_index integer not null check (event_index between 1 and 75),
   number integer not null check (number between 1 and 75),
   operator_name text,
-  created_at timestamptz not null default now(),
+  created_at timestamptz not null default clock_timestamp(),
   unique (draw_id, event_index),
   unique (draw_id, number)
 );
@@ -58,6 +58,9 @@ create unique index if not exists draws_one_active_per_lobby
 
 create index if not exists draw_events_draw_order_idx
   on public.draw_events(draw_id, event_index);
+
+alter table public.draw_events
+  alter column created_at set default clock_timestamp();
 
 alter table public.lobbies enable row level security;
 alter table public.draws enable row level security;
@@ -245,18 +248,15 @@ declare
 begin
   select host_token_hash into v_hash
   from public.draws
-  where id = p_draw_id and status = 'active'
-  for update;
+  where id = p_draw_id and status = 'active';
 
   if not found or not public._token_matches(p_host_token, v_hash) then
     raise exception 'Invalid host token';
   end if;
 
-  update public.draws
-  set lock_claimed_at = coalesce(lock_claimed_at, now()),
-      lock_expires_at = now() + interval '60 seconds'
-  where id = p_draw_id;
-
+  -- Do not update lock timestamps on a timer. The previous implementation wrote to
+  -- public.draws every renewal, which triggered Realtime reloads and replayed UI
+  -- animations while the app was idle.
   return true;
 end;
 $$;
@@ -477,6 +477,10 @@ begin
   end;
   begin
     alter publication supabase_realtime add table public.lobbies;
+  exception when duplicate_object then null;
+  end;
+  begin
+    alter publication supabase_realtime add table public.draw_closures;
   exception when duplicate_object then null;
   end;
 end $$;
