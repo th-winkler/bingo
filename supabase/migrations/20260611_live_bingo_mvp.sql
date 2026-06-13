@@ -335,8 +335,8 @@ begin
   perform pg_advisory_xact_lock(hashtextextended(p_lobby_id::text, 0));
 
   select * into v_draw
-  from public.draws
-  where id = p_draw_id and lobby_id = p_lobby_id
+  from public.draws d
+  where d.id = p_draw_id and d.lobby_id = p_lobby_id
   for update;
 
   if not found or v_draw.status <> 'active' then
@@ -346,19 +346,19 @@ begin
     raise exception 'Invalid host token';
   end if;
 
-  select coalesce(jsonb_agg(number order by event_index), '[]'::jsonb), count(*)::integer
+  select coalesce(jsonb_agg(e.number order by e.event_index), '[]'::jsonb), count(*)::integer
   into v_numbers, v_count
-  from public.draw_events
-  where draw_id = p_draw_id;
+  from public.draw_events e
+  where e.draw_id = p_draw_id;
 
-  update public.draws
+  update public.draws d
   set status = 'closed',
       closed_at = now(),
       host_token_hash = null,
       lock_holder = null,
       lock_claimed_at = null,
       lock_expires_at = null
-  where id = p_draw_id and status = 'active';
+  where d.id = p_draw_id and d.status = 'active';
 
   insert into public.draw_closures(draw_id, closed_by, final_count, final_numbers)
   values (p_draw_id, v_draw.lock_holder, v_count, v_numbers);
@@ -373,10 +373,10 @@ begin
   set active_draw_id = v_new_draw_id
   where id = p_lobby_id;
 
-  lobby_id := p_lobby_id;
-  old_draw_id := p_draw_id;
-  new_draw_id := v_new_draw_id;
-  host_token := v_new_token;
+  close_draw_and_create_new.lobby_id := p_lobby_id;
+  close_draw_and_create_new.old_draw_id := p_draw_id;
+  close_draw_and_create_new.new_draw_id := v_new_draw_id;
+  close_draw_and_create_new.host_token := v_new_token;
   return next;
 end;
 $$;

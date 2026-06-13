@@ -8,7 +8,7 @@ const SEGMENTS = [
 
 const HOST_TOKEN_PREFIX = "bingo.hostToken.";
 const LOCK_RENEW_MS = 30000;
-const DRAW_SUSPENSE_MS = 4600;
+const DRAW_SUSPENSE_MS = 9200;
 const DRAW_REVEAL_SETTLE_MS = 850;
 const LAUNCH_COUNT_SCHEDULE = [5, 4, 3, 2, 1, 0];
 
@@ -111,6 +111,11 @@ function formatResult(number) {
   return segment ? `${segment.letter}-${number}` : "--";
 }
 
+function ordinalDrawLabel(drawNumber) {
+  if (drawNumber === 1) return "1er";
+  return `${drawNumber}º`;
+}
+
 function toDrawItem(event) {
   const number = Number(event.number);
   const segment = getSegment(number);
@@ -149,6 +154,7 @@ function setMode(mode) {
   els.roleEyebrow.textContent = isHost ? "Anfitrión" : "Espectador";
   els.roleEyebrow.className = `eyebrow role-badge ${isHost ? "host" : "viewer"}`;
   els.claimHostForm.hidden = isHost;
+  els.resetButton.hidden = !isHost;
   els.lobbyNameLabel.textContent = isHost
     ? "Ya tienes control de anfitrión"
     : "Introduce la contraseña para tomar control";
@@ -203,9 +209,8 @@ function render() {
   const isConfigured = Boolean(supabaseClient);
 
   els.remainingCount.textContent = Math.max(remaining, 0);
-  els.drawButton.disabled = !isConfigured || !isHost || !isActive || remaining <= 0;
+  if (els.drawButton) els.drawButton.disabled = !isConfigured || !isHost || !isActive || remaining <= 0;
   els.resetButton.disabled = !isConfigured || !isHost || !isActive;
-  els.drawButton.textContent = remaining <= 0 ? "Todos los números ya fueron sorteados" : "Sacar número";
   els.resetButton.hidden = !isHost;
 
   renderRollingResults();
@@ -397,7 +402,7 @@ function renderBallCandidate(number) {
   els.ballLetter.textContent = segment.letter;
   els.ballNumber.textContent = number;
   els.resultText.textContent = formatResult(number);
-  els.segmentLabel.textContent = "Seleccionando número…";
+  els.segmentLabel.textContent = `Sorteando ${ordinalDrawLabel(state.drawn.length + 1)} número...`;
 }
 
 function createLaunchedBallLayer(completedDraws) {
@@ -412,15 +417,26 @@ function createLaunchedBallLayer(completedDraws) {
     const segment = getSegment(number) || SEGMENTS[index % SEGMENTS.length];
     const ball = document.createElement("span");
     ball.className = `launched-ball ${segment.theme}`;
-    ball.textContent = formatResult(number);
+    ball.innerHTML = `<span class="launched-letter">${segment.letter}</span><strong class="launched-number">${number}</strong>`;
     ball.style.setProperty("--ball-color", segment.color);
-    ball.style.setProperty("--delay", `${index * 0.34 + secureRandomInt(18) / 100}s`);
-    ball.style.setProperty("--duration", `${4.15 + secureRandomInt(70) / 100}s`);
-    ball.style.setProperty("--start-y", `${72 + secureRandomInt(16)}%`);
-    ball.style.setProperty("--peak-y", `${40 + secureRandomInt(18)}%`);
-    ball.style.setProperty("--drift", `${secureRandomInt(46) - 23}px`);
-    ball.style.setProperty("--spin", `${240 + secureRandomInt(260)}deg`);
-    ball.style.setProperty("--mid-spin", `${120 + secureRandomInt(160)}deg`);
+    ball.style.setProperty("--delay", `${index * 0.22 + secureRandomInt(12) / 100}s`);
+    ball.style.setProperty("--duration", `${3.35 + secureRandomInt(62) / 100}s`);
+    ball.style.setProperty("--start-y", `${76 + secureRandomInt(18)}%`);
+    ball.style.setProperty("--peak-y", `${30 + secureRandomInt(22)}%`);
+    const drift = secureRandomInt(126) - 63;
+    ball.style.setProperty("--drift", `${drift}px`);
+    ball.style.setProperty("--late-drift", `${drift * -0.38}px`);
+    ball.style.setProperty("--end-drift", `${drift * 0.55}px`);
+    ball.style.setProperty("--arc-push", `${secureRandomInt(54) - 27}px`);
+    const startRotation = secureRandomInt(31) - 10;
+    const reduction = secureRandomInt(10) === 0 ? secureRandomInt(11) : secureRandomInt(4);
+    const spinSpeed = startRotation - reduction;
+    const durationSeconds = 3.35 + secureRandomInt(62) / 100;
+    ball.style.setProperty("--duration", `${durationSeconds}s`);
+    ball.style.setProperty("--start-rotation", `${startRotation}deg`);
+    ball.style.setProperty("--mid-rotation", `${startRotation + spinSpeed * durationSeconds * 0.52}deg`);
+    ball.style.setProperty("--late-rotation", `${startRotation + spinSpeed * durationSeconds * 0.78}deg`);
+    ball.style.setProperty("--end-rotation", `${startRotation + spinSpeed * durationSeconds}deg`);
 
     const lanePositions = count <= 1
       ? [18]
@@ -457,7 +473,7 @@ function startNumberCycle(availableNumbers) {
     }
 
     tick += 1;
-    const interval = 48 + Math.pow(progress, 2.45) * 360 + Math.min(tick, 10) * 2;
+    const interval = 150 + Math.pow(progress, 2.8) * 780 + Math.min(tick, 12) * 5;
     state.drawCycleTimer = window.setTimeout(cycle, interval);
   };
 
@@ -483,7 +499,7 @@ async function revealDrawResult({ finalNumber, finalEventIndex }) {
     els.ballLetter.textContent = segment.letter;
     els.ballNumber.textContent = finalNumber;
     els.resultText.textContent = formatResult(finalNumber);
-    els.segmentLabel.textContent = `Resultado #${finalEventIndex}`;
+    els.segmentLabel.textContent = "Número confirmado";
     burstConfetti(segment.color);
   }
 
@@ -495,10 +511,13 @@ async function revealDrawResult({ finalNumber, finalEventIndex }) {
 
 async function drawNextNumber() {
   requireSupabase();
-  if (!state.draw || !state.hostToken || els.drawButton.disabled || state.drawAnimating) return;
+  if (!state.draw || !state.hostToken || state.drawAnimating) return;
+  const remaining = 75 - state.drawn.length;
+  const isHost = state.mode === "host" && Boolean(state.hostToken);
+  if (!supabaseClient || !isHost || state.draw.status !== "active" || remaining <= 0) return;
 
   const completedDraws = state.drawn.length;
-  els.drawButton.disabled = true;
+  if (els.drawButton) els.drawButton.disabled = true;
   setStatus("Sorteando número…");
 
   const rpcPromise = supabaseClient.rpc("draw_next_number", {
@@ -778,6 +797,57 @@ function animateConfetti() {
   }
 }
 
+function applyHeroScale() {
+  const raw = Number(els.resultHero?.dataset.heroScale || 1);
+  const scale = Number.isFinite(raw) && raw > 0 ? raw : 1;
+  if (!els.resultHero) return;
+  const vars = {
+    "--hero-scale": scale,
+    "--hero-gap": `${10 * scale}px`,
+    "--hero-vh-height": `${38 * scale}vh`,
+    "--hero-max-height": `${380 * scale}px`,
+    "--hero-ball-min": `${170 * scale}px`,
+    "--hero-ball-fluid": `${19 * scale}vw`,
+    "--hero-ball-max": `${230 * scale}px`,
+    "--hero-ball-border": `${12 * scale}px`,
+    "--hero-letter-min": `${1.45 * scale}rem`,
+    "--hero-letter-fluid": `${2.4 * scale}vw`,
+    "--hero-letter-max": `${2.15 * scale}rem`,
+    "--hero-number-padding": `${26 * scale}px`,
+    "--hero-number-min": `${4.1 * scale}rem`,
+    "--hero-number-fluid": `${7 * scale}vw`,
+    "--hero-number-max": `${6.45 * scale}rem`,
+    "--hero-copy-min": `${1.65 * scale}rem`,
+    "--hero-copy-fluid": `${3 * scale}vw`,
+    "--hero-copy-max": `${2.8 * scale}rem`,
+    "--launched-ball-min": `${86 * scale}px`,
+    "--launched-ball-fluid": `${8.8 * scale}vw`,
+    "--launched-ball-max": `${128 * scale}px`,
+    "--launched-ball-border": `${7 * scale}px`,
+    "--launched-letter-min": `${0.88 * scale}rem`,
+    "--launched-letter-fluid": `${1.4 * scale}vw`,
+    "--launched-letter-max": `${1.25 * scale}rem`,
+    "--launched-number-padding": `${20 * scale}px`,
+    "--launched-number-min": `${2.1 * scale}rem`,
+    "--launched-number-fluid": `${3.6 * scale}vw`,
+    "--launched-number-max": `${3.35 * scale}rem`,
+  };
+  for (const [name, value] of Object.entries(vars)) {
+    els.resultHero.style.setProperty(name, String(value));
+  }
+}
+
+function randomizeBallHover() {
+  if (state.drawAnimating) return;
+  const rotation = 10 + secureRandomInt(501) / 100;
+  const rebound = secureRandomInt(301) / 100;
+  els.ball.style.setProperty("--hover-rotation", `${rotation}deg`);
+  els.ball.style.setProperty("--hover-rebound", `${rebound}deg`);
+  els.ball.classList.remove("hover-kick");
+  void els.ball.offsetWidth;
+  els.ball.classList.add("hover-kick");
+}
+
 els.createLobbyForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
@@ -808,7 +878,9 @@ els.claimHostForm.addEventListener("submit", async (event) => {
   }
 });
 
-els.drawButton.addEventListener("click", drawNextNumber);
+if (els.drawButton) els.drawButton.addEventListener("click", drawNextNumber);
+els.ball.addEventListener("mouseenter", randomizeBallHover);
+els.ball.addEventListener("mouseleave", () => els.ball.classList.remove("hover-kick"));
 els.ball.addEventListener("click", drawFromBall);
 els.ball.addEventListener("keydown", drawFromBall);
 els.resetButton.addEventListener("click", closeAndStartNewDraw);
@@ -828,6 +900,7 @@ window.subscribeToLobby = subscribeToLobby;
 window.renderFromCloudState = renderFromCloudState;
 window.setMode = setMode;
 
+applyHeroScale();
 resizeConfettiCanvas();
 setIdleBall("¡Presiona la bola para sortear!");
 render();

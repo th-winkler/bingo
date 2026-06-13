@@ -26,13 +26,13 @@
                   </label>
                   <button class="ghost-action light" type="submit">Tomar control</button>
                 </form>
+                <button id="resetButton" class="reset-action role-reset-action" type="button">
+                  Reiniciar sorteo
+                </button>
               </div>
             </details>
             <h1 id="app-title">Bingo Online 2026 - Rotary Club Rukapillán</h1>
           </div>
-          <button id="resetButton" class="reset-action" type="button">
-            Reiniciar sorteo
-          </button>
           <button id="sessionPanel" class="session-panel" type="button" hidden aria-label="Cambiar sala">
             <span class="session-summary">
               <span class="lobby-code-chip">Código de Sala <strong id="lobbyCodeLabel">------</strong></span>
@@ -58,7 +58,7 @@
           </div>
         </header>
 
-        <section class="result-hero" aria-label="Resultado actual">
+        <section class="result-hero" data-hero-scale="1" style="--hero-scale: 1;" aria-label="Resultado actual">
           <div class="glow-ring" aria-hidden="true"></div>
           <div id="currentBall" class="bingo-ball is-idle" role="button" tabindex="0" aria-label="Sacar número">
             <span class="ball-letter">?</span>
@@ -67,12 +67,6 @@
           <div class="result-copy">
             <p id="segmentLabel">Listo para sortear</p>
             <h2 id="resultText">¡Presiona la bola para sortear!</h2>
-          </div>
-          <div class="action-row">
-            <button id="drawButton" class="primary-action" type="button">
-              Sacar número
-            </button>
-
           </div>
         </section>
 

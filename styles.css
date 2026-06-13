@@ -193,13 +193,14 @@ h1 {
 }
 
 .result-hero {
+  --hero-scale: 1;
   position: relative;
   isolation: isolate;
   display: grid;
   place-items: center;
   align-content: center;
-  gap: 10px;
-  min-height: min(38vh, 380px);
+  gap: var(--hero-gap, 10px);
+  min-height: min(var(--hero-vh-height, 38vh), var(--hero-max-height, 380px));
   overflow: hidden;
   border-radius: 8px;
   background:
@@ -252,20 +253,24 @@ h1 {
   z-index: 5;
   display: grid;
   place-items: center;
-  width: clamp(170px, 19vw, 230px);
+  width: clamp(var(--hero-ball-min, 170px), var(--hero-ball-fluid, 19vw), var(--hero-ball-max, 230px));
   aspect-ratio: 1;
-  border: 12px solid rgba(255, 255, 255, 0.78);
+  border: var(--hero-ball-border, 12px) solid rgba(255, 255, 255, 0.78);
   border-radius: 50%;
   background: var(--g);
   box-shadow:
     inset -24px -28px 44px rgba(0, 0, 0, 0.2),
     inset 20px 24px 38px rgba(255, 255, 255, 0.24),
     0 30px 80px rgba(0, 0, 0, 0.42);
-  transition: transform 180ms ease-out, background 220ms ease, box-shadow 180ms ease-out;
+  transition: background 220ms ease, box-shadow 180ms ease-out;
 }
 
 .bingo-ball:not(.is-randomizing):not(.is-revealing):hover {
-  transform: translateY(-5px) rotate(12deg);
+  transform: translateY(-1px) rotate(var(--hover-rebound, 1deg));
+}
+
+.bingo-ball.hover-kick:not(.is-randomizing):not(.is-revealing) {
+  animation: ballHoverKick 260ms ease-out both;
 }
 
 .bingo-ball.is-randomizing {
@@ -277,6 +282,39 @@ h1 {
   animation: revealSettle 850ms cubic-bezier(0.2, 0.95, 0.2, 1) both;
 }
 
+.bingo-ball::before,
+.launched-ball::before {
+  content: "";
+  position: absolute;
+  inset: 8%;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.36), rgba(255, 255, 255, 0.08) 18%, transparent 34%);
+  z-index: 1;
+}
+
+.bingo-ball::after,
+.launched-ball::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0);
+  z-index: 2;
+}
+
+.bingo-ball.is-randomizing::after {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.ball-letter,
+.ball-number,
+.launched-letter,
+.launched-number {
+  z-index: 3;
+}
+
 .bingo-ball.is-drawing {
   animation: pop 520ms ease;
 }
@@ -284,14 +322,14 @@ h1 {
 .ball-letter {
   position: absolute;
   top: 13%;
-  font-size: clamp(1.45rem, 2.4vw, 2.15rem);
+  font-size: clamp(var(--hero-letter-min, 1.45rem), var(--hero-letter-fluid, 2.4vw), var(--hero-letter-max, 2.15rem));
   font-weight: 900;
   opacity: 0.86;
 }
 
 .ball-number {
-  padding-top: 26px;
-  font-size: clamp(4.1rem, 7vw, 6.45rem);
+  padding-top: var(--hero-number-padding, 26px);
+  font-size: clamp(var(--hero-number-min, 4.1rem), var(--hero-number-fluid, 7vw), var(--hero-number-max, 6.45rem));
   line-height: 1;
   letter-spacing: 0;
 }
@@ -309,7 +347,7 @@ h1 {
 
 .result-copy h2 {
   margin-top: 6px;
-  font-size: clamp(1.65rem, 3vw, 2.8rem);
+  font-size: clamp(var(--hero-copy-min, 1.65rem), var(--hero-copy-fluid, 3vw), var(--hero-copy-max, 2.8rem));
   line-height: 1;
 }
 
@@ -686,44 +724,63 @@ td {
   top: var(--start-y);
   display: grid;
   place-items: center;
-  width: clamp(42px, 5vw, 66px);
+  width: clamp(var(--launched-ball-min, 86px), var(--launched-ball-fluid, 8.8vw), var(--launched-ball-max, 128px));
   aspect-ratio: 1;
-  border: 4px solid rgba(255, 255, 255, 0.78);
+  border: var(--launched-ball-border, 7px) solid rgba(255, 255, 255, 0.72);
   border-radius: 50%;
   color: #fff;
-  background:
-    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.72), transparent 18%),
-    var(--ball-color);
+  background: var(--ball-color);
   box-shadow:
-    inset -10px -12px 18px rgba(0, 0, 0, 0.24),
-    0 14px 32px rgba(0, 0, 0, 0.28);
-  font-size: clamp(0.72rem, 1vw, 0.92rem);
+    inset -18px -22px 34px rgba(0, 0, 0, 0.38),
+    inset 12px 15px 24px rgba(255, 255, 255, 0.12),
+    0 18px 38px rgba(0, 0, 0, 0.34);
   font-weight: 900;
-  opacity: 0;
-  transform: translate3d(0, 0, 0) rotate(0deg) scale(0.92);
-  animation: launchedBallArc var(--duration) cubic-bezier(0.18, 0.74, 0.31, 1) var(--delay) both;
-  will-change: top, transform, opacity;
+  opacity: 1;
+  transform: translate3d(0, 0, 0) rotate(var(--start-rotation)) scale(0.96);
+  animation: launchedBallArc var(--duration) cubic-bezier(0.16, 0.78, 0.22, 1) var(--delay) both;
+  will-change: top, transform;
+}
+
+.launched-ball::after {
+  background: rgba(0, 0, 0, 0.30);
+}
+
+.launched-letter {
+  position: absolute;
+  top: 14%;
+  font-size: clamp(var(--launched-letter-min, 0.88rem), var(--launched-letter-fluid, 1.4vw), var(--launched-letter-max, 1.25rem));
+  opacity: 0.88;
+}
+
+.launched-number {
+  padding-top: var(--launched-number-padding, 20px);
+  font-size: clamp(var(--launched-number-min, 2.1rem), var(--launched-number-fluid, 3.6vw), var(--launched-number-max, 3.35rem));
+  line-height: 1;
 }
 
 @keyframes launchedBallArc {
   0% {
     top: var(--start-y);
-    opacity: 0;
-    transform: translate3d(0, 18px, 0) rotate(0deg) scale(0.82);
+    transform: translate3d(0, 18px, 0) rotate(var(--start-rotation)) scale(0.96);
   }
-  12% {
-    opacity: 0.6;
-  }
-  48% {
+  36% {
     top: var(--peak-y);
-    opacity: 0.6;
-    transform: translate3d(var(--drift), -8px, 0) rotate(var(--mid-spin)) scale(1);
+    transform: translate3d(calc(var(--drift) + var(--arc-push)), -14px, 0) rotate(var(--mid-rotation)) scale(1.03);
+  }
+  68% {
+    top: calc(var(--peak-y) + 9%);
+    transform: translate3d(var(--late-drift), 2px, 0) rotate(var(--late-rotation)) scale(0.99);
   }
   100% {
     top: var(--start-y);
-    opacity: 0;
-    transform: translate3d(calc(var(--drift) * 0.38), 26px, 0) rotate(var(--spin)) scale(0.84);
+    transform: translate3d(var(--end-drift), 30px, 0) rotate(var(--end-rotation)) scale(0.94);
   }
+}
+
+@keyframes ballHoverKick {
+  0% { transform: translateY(0) rotate(0deg); }
+  58% { transform: translateY(-1px) rotate(var(--hover-rotation, 12deg)); }
+  100% { transform: translateY(-1px) rotate(var(--hover-rebound, 1deg)); }
 }
 
 @keyframes drawWobble {
@@ -996,16 +1053,16 @@ td {
   }
 
   .bingo-ball {
-    width: clamp(155px, 15vw, 205px);
-    border-width: 10px;
+    width: clamp(var(--hero-ball-min, 155px), var(--hero-ball-fluid, 15vw), var(--hero-ball-max, 205px));
+    border-width: var(--hero-ball-border, 10px);
   }
 
   .ball-number {
-    font-size: clamp(3.6rem, 5.5vw, 5.7rem);
+    font-size: clamp(var(--hero-number-min, 3.6rem), var(--hero-number-fluid, 5.5vw), var(--hero-number-max, 5.7rem));
   }
 
   .result-copy h2 {
-    font-size: clamp(1.45rem, 2.4vw, 2.3rem);
+    font-size: clamp(var(--hero-copy-min, 1.45rem), var(--hero-copy-fluid, 2.4vw), var(--hero-copy-max, 2.3rem));
   }
 
   .primary-action,
@@ -1090,6 +1147,8 @@ td {
   top: calc(100% + 10px);
   left: 0;
   z-index: 35;
+  display: grid;
+  gap: 12px;
   width: min(430px, calc(100vw - 32px));
   padding: 14px;
   border: 1px solid rgba(255, 255, 255, 0.54);
@@ -1102,7 +1161,6 @@ td {
 
 .role-menu small {
   display: block;
-  margin-bottom: 10px;
   color: var(--ink);
   font-size: 0.95rem;
   font-weight: 900;
@@ -1114,7 +1172,7 @@ td {
 }
 
 .reset-action {
-  align-self: center;
+  align-self: stretch;
   min-height: 42px;
   border-radius: 8px;
   padding: 0 18px;
@@ -1229,7 +1287,7 @@ summary:active {
 
 @media (min-width: 1200px) {
   .topbar {
-    grid-template-columns: minmax(360px, 1fr) auto auto auto;
+    grid-template-columns: minmax(360px, 1fr) auto auto;
   }
 }
 
