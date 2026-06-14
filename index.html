@@ -20,7 +20,10 @@
               <div class="role-menu">
                 <small id="lobbyNameLabel">Control de anfitrión</small>
                 <form id="claimHostForm" class="claim-form claim-form-single">
-                  <p class="claim-note">Usa la credencial fija del evento.</p>
+                  <label>
+                    Credencial fija del evento
+                    <input id="claimHostCredentialInput" name="hostCredential" type="password" autocomplete="current-password" required placeholder="Ingresar credencial">
+                  </label>
                   <button class="ghost-action light" type="submit">Tomar control</button>
                 </form>
                 <form id="renameLobbyForm" class="claim-form" hidden>
@@ -106,7 +109,11 @@
                 Nombre de la sala
                 <input id="lobbyNameInput" name="name" type="text" autocomplete="off" required placeholder="Bingo Rotary">
               </label>
-              <p class="lobby-form-note">La credencial fija del evento se aplicará automáticamente.</p>
+              <label>
+                Credencial fija del evento
+                <input id="createHostCredentialInput" name="hostCredential" type="password" autocomplete="current-password" required placeholder="Ingresar credencial">
+              </label>
+              <p class="lobby-form-note">La credencial se verifica en Supabase; no se asume ni se guarda en el código del cliente.</p>
               <button class="primary-action" type="submit">Crear sala</button>
             </form>
             <form id="joinLobbyForm" class="lobby-form">

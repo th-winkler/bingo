@@ -7,7 +7,6 @@ const SEGMENTS = [
 ];
 
 const HOST_TOKEN_PREFIX = "bingo.hostToken.";
-const FIXED_HOST_PASSWORD = "Rukapillanos2026";
 const LOCK_RENEW_MS = 30000;
 const DRAW_ROLL_TIMING = Object.freeze({
   rouletteStart: 240,
@@ -62,6 +61,8 @@ const els = {
   joinLobbyForm: document.getElementById("joinLobbyForm"),
   lobbyCodeLabel: document.getElementById("lobbyCodeLabel"),
   lobbyNameInput: document.getElementById("lobbyNameInput"),
+  createHostCredentialInput: document.getElementById("createHostCredentialInput"),
+  claimHostCredentialInput: document.getElementById("claimHostCredentialInput"),
   lobbyNameLabel: document.getElementById("lobbyNameLabel"),
   lobbyOverlay: document.getElementById("lobbyOverlay"),
   lobbyStatus: document.getElementById("lobbyStatus"),
@@ -103,6 +104,13 @@ function setStatus(message, isError = false) {
 
 function cleanLobbyName(name) {
   return String(name || "").replace(/\s+/g, " ").trim().slice(0, 80);
+}
+
+function requireHostCredential(value) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("Ingresa la credencial fija del evento.");
+  }
+  return value;
 }
 
 function renderLobbyTitle(name) {
@@ -466,12 +474,13 @@ async function loadLobbyState(lobbyCode, options = {}) {
   }
 }
 
-async function createLobby(name) {
+async function createLobby(name, hostCredential) {
   requireSupabase();
+  const checkedCredential = requireHostCredential(hostCredential);
   setStatus("Creando sala…");
   const { data, error } = await supabaseClient.rpc("create_lobby", {
     p_name: cleanLobbyName(name),
-    p_host_password: FIXED_HOST_PASSWORD,
+    p_host_password: checkedCredential,
   });
   if (error) throw error;
 
@@ -494,12 +503,13 @@ async function joinLobby(lobbyCode) {
   if (state.hostToken) startHostLockRenewal();
 }
 
-async function claimHost(lobbyCode) {
+async function claimHost(lobbyCode, hostCredential) {
   requireSupabase();
+  const checkedCredential = requireHostCredential(hostCredential);
   setStatus("Tomando control…");
   const { data, error } = await supabaseClient.rpc("claim_host", {
     p_lobby_code: normalizeCode(lobbyCode),
-    p_host_password: FIXED_HOST_PASSWORD,
+    p_host_password: checkedCredential,
     p_lock_holder: "host",
   });
   if (error) throw error;
@@ -1348,8 +1358,10 @@ function settleBallHover() {
 els.createLobbyForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
-    await createLobby(els.lobbyNameInput.value);
+    await createLobby(els.lobbyNameInput.value, els.createHostCredentialInput?.value || "");
+    if (els.createHostCredentialInput) els.createHostCredentialInput.value = "";
   } catch (error) {
+    if (els.createHostCredentialInput) els.createHostCredentialInput.value = "";
     setStatus(error.message, true);
   }
 });
@@ -1368,8 +1380,10 @@ if (els.claimHostForm) {
     event.preventDefault();
     if (!state.lobby) return;
     try {
-      await claimHost(state.lobby.lobby_code);
+      await claimHost(state.lobby.lobby_code, els.claimHostCredentialInput?.value || "");
+      if (els.claimHostCredentialInput) els.claimHostCredentialInput.value = "";
     } catch (error) {
+      if (els.claimHostCredentialInput) els.claimHostCredentialInput.value = "";
       setStatus(error.message, true);
     }
   });
