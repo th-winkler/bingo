@@ -732,18 +732,19 @@ td {
   color: #fff;
   background: var(--ball-color);
   box-shadow:
-    inset -18px -22px 34px rgba(0, 0, 0, 0.38),
-    inset 12px 15px 24px rgba(255, 255, 255, 0.12),
-    0 18px 38px rgba(0, 0, 0, 0.34);
+    inset -22px -26px 38px rgba(0, 0, 0, 0.48),
+    inset 12px 15px 24px rgba(255, 255, 255, 0.10),
+    0 20px 44px rgba(0, 0, 0, 0.42);
   font-weight: 900;
-  opacity: 0;
-  filter: blur(var(--launched-blur, 0));
+  visibility: hidden;
+  filter: blur(var(--launched-blur, 0)) brightness(var(--launched-brightness, 0.9));
   transform: translate3d(0, 0, 0);
-  will-change: transform, opacity, filter;
+  will-change: transform, filter;
 }
 
 .launched-ball::after {
-  background: rgba(0, 0, 0, var(--launched-shade, 0.30));
+  background:
+    radial-gradient(circle at 33% 25%, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, var(--launched-shade, 0.36)) 62%, rgba(0, 0, 0, var(--launched-edge-shade, 0.52)) 100%);
 }
 
 .launched-letter {
