@@ -18,13 +18,17 @@
             <details id="rolePanel" class="role-panel">
               <summary class="eyebrow role-badge viewer" id="roleEyebrow">Espectador</summary>
               <div class="role-menu">
-                <small id="lobbyNameLabel">Contraseña del anfitrión</small>
-                <form id="claimHostForm" class="claim-form">
-                  <label>
-                    Contraseña
-                    <input id="claimPasswordInput" type="password" autocomplete="current-password" placeholder="Tomar control">
-                  </label>
+                <small id="lobbyNameLabel">Control de anfitrión</small>
+                <form id="claimHostForm" class="claim-form claim-form-single">
+                  <p class="claim-note">Usa la credencial fija del evento.</p>
                   <button class="ghost-action light" type="submit">Tomar control</button>
+                </form>
+                <form id="renameLobbyForm" class="claim-form" hidden>
+                  <label>
+                    Cambiar nombre de sala
+                    <input id="lobbyNameEditInput" type="text" autocomplete="off" maxlength="80" placeholder="Nombre de sala">
+                  </label>
+                  <button class="ghost-action light" type="submit">Confirmar cambios</button>
                 </form>
                 <button id="resetButton" class="reset-action role-reset-action" type="button">
                   Reiniciar sorteo
@@ -102,10 +106,7 @@
                 Nombre de la sala
                 <input id="lobbyNameInput" name="name" type="text" autocomplete="off" required placeholder="Bingo Rotary">
               </label>
-              <label>
-                Contraseña del anfitrión
-                <input id="hostPasswordInput" name="password" type="password" autocomplete="new-password" required minlength="4">
-              </label>
+              <p class="lobby-form-note">La credencial fija del evento se aplicará automáticamente.</p>
               <button class="primary-action" type="submit">Crear sala</button>
             </form>
             <form id="joinLobbyForm" class="lobby-form">

@@ -7,9 +7,20 @@ const SEGMENTS = [
 ];
 
 const HOST_TOKEN_PREFIX = "bingo.hostToken.";
+const FIXED_HOST_PASSWORD = "Rukapillanos2026";
 const LOCK_RENEW_MS = 30000;
-const DRAW_SUSPENSE_MS = 9200;
-const DRAW_REVEAL_SETTLE_MS = 850;
+const DRAW_ROLL_TIMING = Object.freeze({
+  rouletteStart: 240,
+  rouletteDuration: 5400,
+  suspenseMin: 900,
+  suspenseMax: 1500,
+  fakeOutSuspenseMin: 420,
+  fakeOutSuspenseMax: 680,
+});
+const RESULT_GLOW_VISIBLE_MS = 3000;
+const RESULT_GLOW_FADE_MS = 1100;
+const DRAW_ROLL_TICKS = 21;
+const DRAW_FAKE_OUT_CHANCE = 0.38;
 const LAUNCH_COUNT_SCHEDULE = [5, 4, 3, 2, 1, 0];
 
 const state = {
@@ -27,7 +38,11 @@ const state = {
   loadingState: false,
   drawAnimating: false,
   drawCycleTimer: null,
+  drawDotTimer: null,
+  drawRollRunId: 0,
   launchedBallAnimationId: null,
+  resultGlowTimer: null,
+  resultGlowFadeTimer: null,
   flyingBalls: [],
 };
 
@@ -36,13 +51,13 @@ const els = {
   ballLetter: document.querySelector(".ball-letter"),
   ballNumber: document.querySelector(".ball-number"),
   claimHostForm: document.getElementById("claimHostForm"),
-  claimPasswordInput: document.getElementById("claimPasswordInput"),
+  renameLobbyForm: document.getElementById("renameLobbyForm"),
+  lobbyNameEditInput: document.getElementById("lobbyNameEditInput"),
   confetti: document.getElementById("confetti"),
   copyButton: document.getElementById("copyButton"),
   createLobbyForm: document.getElementById("createLobbyForm"),
   drawButton: document.getElementById("drawButton"),
   historyBody: document.getElementById("historyBody"),
-  hostPasswordInput: document.getElementById("hostPasswordInput"),
   joinCodeInput: document.getElementById("joinCodeInput"),
   joinLobbyForm: document.getElementById("joinLobbyForm"),
   lobbyCodeLabel: document.getElementById("lobbyCodeLabel"),
@@ -86,6 +101,17 @@ function setStatus(message, isError = false) {
   els.lobbyStatus.style.color = isError ? "#b42318" : "var(--muted)";
 }
 
+function cleanLobbyName(name) {
+  return String(name || "").replace(/\s+/g, " ").trim().slice(0, 80);
+}
+
+function renderLobbyTitle(name) {
+  const fallback = "Bingo Online 2026 - Rotary Club Rukapillán";
+  const title = cleanLobbyName(name) || fallback;
+  els.appTitle.textContent = title;
+  els.appTitle.title = title;
+}
+
 function requireSupabase() {
   if (!supabaseClient) {
     throw new Error("Configura Supabase URL y anon key en supabaseConfig.js antes de usar lobbies en vivo.");
@@ -104,6 +130,39 @@ function firstRpcRow(data) {
   return Array.isArray(data) ? data[0] : data;
 }
 
+function isMissingRpcError(error) {
+  if (!error) return false;
+  const code = String(error.code || "");
+  const message = String(error.message || error.details || error.hint || "").toLowerCase();
+  return (
+    code === "PGRST202" ||
+    code === "42883" ||
+    message.includes("could not find the function") ||
+    message.includes("function public.update_lobby_name") ||
+    message.includes("function update_lobby_name") ||
+    message.includes("schema cache") ||
+    message.includes("does not exist")
+  );
+}
+
+function isPermissionError(error) {
+  if (!error) return false;
+  const code = String(error.code || "");
+  const message = String(error.message || error.details || "").toLowerCase();
+  return code === "42501" || message.includes("permission") || message.includes("row-level security") || message.includes("rls");
+}
+
+function lobbyRenameUnavailableMessage(reason = "") {
+  const suffix = reason ? ` ${reason}` : "";
+  return `Cambio de nombre no disponible.${suffix} La sala sigue funcionando; ejecuta supabase/update_lobby_name_rpc.sql para habilitar esta opción.`;
+}
+
+function friendlyErrorMessage(error, fallback = "Ocurrió un error inesperado.") {
+  if (isMissingRpcError(error)) return lobbyRenameUnavailableMessage("Falta la función update_lobby_name.");
+  if (isPermissionError(error)) return lobbyRenameUnavailableMessage("Supabase bloqueó la actualización por permisos.");
+  return error?.message || fallback;
+}
+
 function getSegment(number) {
   return SEGMENTS.find((segment) => number >= segment.min && number <= segment.max);
 }
@@ -116,6 +175,67 @@ function formatResult(number) {
 function ordinalDrawLabel(drawNumber) {
   if (drawNumber === 1) return "1er";
   return `${drawNumber}º`;
+}
+
+function ordinalDrawWord(drawNumber) {
+  const units = {
+    1: "primer",
+    2: "segundo",
+    3: "tercer",
+    4: "cuarto",
+    5: "quinto",
+    6: "sexto",
+    7: "séptimo",
+    8: "octavo",
+    9: "noveno",
+  };
+  const tens = {
+    10: "décimo",
+    20: "vigésimo",
+    30: "trigésimo",
+    40: "cuadragésimo",
+    50: "quincuagésimo",
+    60: "sexagésimo",
+    70: "septuagésimo",
+  };
+  const number = Number(drawNumber);
+  if (number >= 1 && number <= 9) return units[number];
+  if (number in tens) return tens[number];
+  const ten = Math.floor(number / 10) * 10;
+  const unit = number % 10;
+  if (tens[ten] && units[unit]) return `${tens[ten]} ${units[unit]}`;
+  return `${number}º`;
+}
+
+function drawProgressHtml(dotCount = 3) {
+  const drawNumber = state.drawn.length + 1;
+  const dots = ".".repeat(clamp(dotCount, 1, 3));
+  return `Sorteando el ${ordinalDrawWord(drawNumber)} número <span class="draw-dots">${dots}</span>`;
+}
+
+function setDrawProgressLabel(dotCount = 3) {
+  els.segmentLabel.innerHTML = drawProgressHtml(dotCount);
+}
+
+function startDrawDots() {
+  stopDrawDots();
+  let dotCount = 1;
+  setDrawProgressLabel(dotCount);
+  state.drawDotTimer = window.setInterval(() => {
+    if (!state.drawAnimating) {
+      stopDrawDots();
+      return;
+    }
+    dotCount = dotCount >= 3 ? 1 : dotCount + 1;
+    setDrawProgressLabel(dotCount);
+  }, 360);
+}
+
+function stopDrawDots() {
+  if (state.drawDotTimer) {
+    window.clearInterval(state.drawDotTimer);
+    state.drawDotTimer = null;
+  }
 }
 
 function toDrawItem(event) {
@@ -155,20 +275,25 @@ function setMode(mode) {
   const isHost = state.mode === "host" && Boolean(state.hostToken);
   els.roleEyebrow.textContent = isHost ? "Anfitrión" : "Espectador";
   els.roleEyebrow.className = `eyebrow role-badge ${isHost ? "host" : "viewer"}`;
-  els.claimHostForm.hidden = isHost;
+  if (els.claimHostForm) els.claimHostForm.hidden = isHost;
+  if (els.renameLobbyForm) els.renameLobbyForm.hidden = !isHost;
   els.resetButton.hidden = !isHost;
-  els.lobbyNameLabel.textContent = isHost
-    ? "Ya tienes control de anfitrión"
-    : "Introduce la contraseña para tomar control";
+  els.lobbyNameLabel.textContent = isHost ? "Administración de sala" : "Control de anfitrión";
+  if (els.lobbyNameEditInput && state.lobby?.name) els.lobbyNameEditInput.value = state.lobby.name;
   render();
 }
 
 function setIdleBall(message = "Esperando nuevo número…") {
+  stopResultIdleEffects();
+  stopDrawDots();
+  resetDrawMotion();
   els.ball.className = "bingo-ball is-idle";
   els.ball.style.background = "var(--g)";
+  els.ball.style.filter = "";
   els.ballLetter.textContent = "?";
   els.ballNumber.textContent = "--";
   els.resultText.textContent = message;
+  els.resultText.classList.remove("is-randomizing-result");
   els.segmentLabel.textContent = state.draw?.status === "closed" ? "Sorteo cerrado" : "Listo para sortear";
 }
 
@@ -194,11 +319,14 @@ function renderCurrentBall(animate = false) {
     void els.ball.offsetWidth;
   }
 
-  els.ball.className = `bingo-ball ${animate ? "is-drawing" : ""} ${latest.segment.theme}`;
+  resetDrawMotion();
+  els.ball.className = `bingo-ball is-idle ${animate ? "is-drawing" : "has-result"} ${latest.segment.theme}`;
   els.ball.style.background = latest.segment.color;
+  els.ball.style.filter = "";
   els.ballLetter.textContent = latest.segment.letter;
   els.ballNumber.textContent = latest.number;
   els.resultText.textContent = latest.result;
+  els.resultText.classList.remove("is-randomizing-result");
   els.segmentLabel.textContent = `Segmento ${latest.segment.letter} · ${latest.segment.min}-${latest.segment.max}`;
 
   if (animate) burstConfetti(latest.segment.color);
@@ -259,6 +387,12 @@ function renderHistory() {
     .join("");
 }
 
+
+function setResettingDrawVisual(isResetting) {
+  els.rollingResults.classList.toggle("is-resetting-draw", Boolean(isResetting));
+  els.historyBody.classList.toggle("is-resetting-draw", Boolean(isResetting));
+}
+
 function renderSegmentBoard() {
   const drawnNumbers = new Set(state.drawn.map((item) => item.number));
 
@@ -282,7 +416,7 @@ function renderSegmentBoard() {
   }).join("");
 }
 
-function renderFromCloudState(cloudState, { animateLatest = false } = {}) {
+function renderFromCloudState(cloudState, { animateLatest = false, preserveCurrentBall = false } = {}) {
   const previousDrawId = state.draw?.id;
   const previousLatest = state.drawn[0]?.eventIndex;
 
@@ -297,11 +431,12 @@ function renderFromCloudState(cloudState, { animateLatest = false } = {}) {
   els.sessionPanel.hidden = false;
   els.rolePanel.hidden = false;
   els.lobbyCodeLabel.textContent = state.lobby.lobby_code;
-  els.appTitle.textContent = state.lobby.name || "Bingo Online 2026 - Rotary Club Rukapillán";
+  renderLobbyTitle(state.lobby.name);
+  if (els.lobbyNameEditInput) els.lobbyNameEditInput.value = state.lobby.name || "";
 
   const latest = state.drawn[0];
   const shouldAnimate = shouldAnimateLatestNumber(previousDrawId, previousLatest, latest, animateLatest);
-  renderCurrentBall(Boolean(shouldAnimate));
+  if (!preserveCurrentBall) renderCurrentBall(Boolean(shouldAnimate));
 
   if (state.draw.status === "closed") {
     setStatus("Sorteo cerrado. Esperando nuevo sorteo…");
@@ -331,12 +466,12 @@ async function loadLobbyState(lobbyCode, options = {}) {
   }
 }
 
-async function createLobby(name, hostPassword) {
+async function createLobby(name) {
   requireSupabase();
   setStatus("Creando sala…");
   const { data, error } = await supabaseClient.rpc("create_lobby", {
-    p_name: name,
-    p_host_password: hostPassword,
+    p_name: cleanLobbyName(name),
+    p_host_password: FIXED_HOST_PASSWORD,
   });
   if (error) throw error;
 
@@ -359,12 +494,12 @@ async function joinLobby(lobbyCode) {
   if (state.hostToken) startHostLockRenewal();
 }
 
-async function claimHost(lobbyCode, hostPassword) {
+async function claimHost(lobbyCode) {
   requireSupabase();
   setStatus("Tomando control…");
   const { data, error } = await supabaseClient.rpc("claim_host", {
     p_lobby_code: normalizeCode(lobbyCode),
-    p_host_password: hostPassword,
+    p_host_password: FIXED_HOST_PASSWORD,
     p_lock_holder: "host",
   });
   if (error) throw error;
@@ -377,6 +512,52 @@ async function claimHost(lobbyCode, hostPassword) {
   updateHash(code, "host");
   await loadLobbyState(code);
   startHostLockRenewal();
+}
+
+async function updateLobbyName(name) {
+  requireSupabase();
+  if (!state.lobby || !state.hostToken) return;
+  const nextName = cleanLobbyName(name);
+  if (!nextName) throw new Error("El nombre de la sala no puede estar vacío.");
+  if (nextName === cleanLobbyName(state.lobby.name)) {
+    setStatus(`Sala activa ${state.lobby.lobby_code}. Sin cambios en el nombre.`);
+    return;
+  }
+
+  setStatus("Actualizando nombre de sala…");
+
+  const rpcResult = await supabaseClient.rpc("update_lobby_name", {
+    p_lobby_code: normalizeCode(state.lobby.lobby_code),
+    p_host_token: state.hostToken,
+    p_name: nextName,
+  });
+
+  if (rpcResult.error) {
+    const rpcError = rpcResult.error;
+    const directResult = await supabaseClient
+      .from("lobbies")
+      .update({ name: nextName })
+      .eq("id", state.lobby.id)
+      .select("id,name")
+      .single();
+
+    if (directResult.error) {
+      console.warn("Lobby rename failed", { rpcError, directError: directResult.error });
+      if (isMissingRpcError(rpcError)) {
+        throw new Error(lobbyRenameUnavailableMessage("Falta la función update_lobby_name."));
+      }
+      if (isPermissionError(directResult.error)) {
+        throw new Error(lobbyRenameUnavailableMessage("Supabase bloqueó la actualización por permisos."));
+      }
+      throw directResult.error;
+    }
+  }
+
+  state.lobby.name = nextName;
+  renderLobbyTitle(nextName);
+  if (els.lobbyNameEditInput) els.lobbyNameEditInput.value = nextName;
+  setStatus(`Sala activa ${state.lobby.lobby_code}. Nombre actualizado.`);
+  await loadLobbyState(state.lobby.lobby_code, { preserveCurrentBall: true });
 }
 
 function sleep(ms) {
@@ -399,12 +580,14 @@ function chooseCycleNumber(availableNumbers) {
 function renderBallCandidate(number) {
   const segment = getSegment(number);
   if (!segment) return;
+  const hiddenNumber = "?".repeat(String(number).length);
   els.ball.className = `bingo-ball is-randomizing ${segment.theme}`;
   els.ball.style.background = segment.color;
   els.ballLetter.textContent = segment.letter;
   els.ballNumber.textContent = number;
-  els.resultText.textContent = formatResult(number);
-  els.segmentLabel.textContent = `Sorteando ${ordinalDrawLabel(state.drawn.length + 1)} número...`;
+  els.resultText.textContent = `?-${hiddenNumber}`;
+  els.resultText.classList.add("is-randomizing-result");
+  if (!state.drawDotTimer) setDrawProgressLabel(3);
 }
 
 function randomFloat(min, max) {
@@ -417,6 +600,64 @@ function randomFromZone(zone) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function easeOutCubic(value) {
+  const progress = clamp(value, 0, 1);
+  return 1 - Math.pow(1 - progress, 3);
+}
+
+function resetDrawMotion() {
+  els.ball.style.setProperty("--draw-x", "0px");
+  els.ball.style.setProperty("--draw-y", "0px");
+  els.ball.style.setProperty("--draw-scale", "1");
+  els.ball.style.setProperty("--draw-tilt", "0deg");
+  els.ball.style.setProperty("--draw-step-ms", "120ms");
+}
+
+function applyDrawTickMotion(progress, tick, stepMs) {
+  const remaining = 1 - easeOutCubic(progress);
+  const sign = tick % 2 === 0 ? -1 : 1;
+  const phase = tick % 4;
+  const x = sign * (2.2 * remaining);
+  const y = (phase === 0 || phase === 3 ? -1 : 1) * (1.2 * remaining);
+  const scale = 0.99 - 0.01 * remaining;
+  const tilt = sign * (4.8 * remaining);
+  els.ball.style.setProperty("--draw-x", `${x.toFixed(3)}px`);
+  els.ball.style.setProperty("--draw-y", `${y.toFixed(3)}px`);
+  els.ball.style.setProperty("--draw-scale", scale.toFixed(4));
+  els.ball.style.setProperty("--draw-tilt", `${tilt.toFixed(3)}deg`);
+  els.ball.style.setProperty("--draw-step-ms", `${Math.max(80, Math.min(460, stepMs || 140)).toFixed(0)}ms`);
+}
+
+function stopResultIdleEffects() {
+  if (state.resultGlowTimer) {
+    window.clearTimeout(state.resultGlowTimer);
+    state.resultGlowTimer = null;
+  }
+  if (state.resultGlowFadeTimer) {
+    window.clearTimeout(state.resultGlowFadeTimer);
+    state.resultGlowFadeTimer = null;
+  }
+  els.resultHero.classList.remove("is-result-idle", "is-result-glow", "is-result-glow-fading");
+}
+
+function startResultIdleEffects(accentColor) {
+  stopResultIdleEffects();
+  els.resultHero.style.setProperty("--result-glow-color", accentColor || "#ffffff");
+  els.resultHero.classList.add("is-result-idle", "is-result-glow");
+
+  state.resultGlowTimer = window.setTimeout(() => {
+    state.resultGlowTimer = null;
+    if (state.drawAnimating) return;
+    els.resultHero.classList.remove("is-result-glow");
+    els.resultHero.classList.add("is-result-glow-fading");
+
+    state.resultGlowFadeTimer = window.setTimeout(() => {
+      state.resultGlowFadeTimer = null;
+      els.resultHero.classList.remove("is-result-glow-fading");
+    }, RESULT_GLOW_FADE_MS);
+  }, RESULT_GLOW_VISIBLE_MS);
 }
 
 function stopLaunchedBallAnimation({ removeLayer = false } = {}) {
@@ -444,9 +685,10 @@ function createLaunchedBallLayer(completedDraws) {
   const mainSize = clamp(mainRect.width || bounds.width * 0.19, 120, 260);
   const unitX = bounds.width / 20;
   const gravity = 9.81;
-  const launchY = -5;
-  const floorY = Math.max(bounds.height - mainSize * 0.18, mainSize * 0.75);
-  const unitY = Math.max(24, (floorY - mainSize * 0.35) / 8.5);
+  const baseFloorY = Math.max(bounds.height - mainSize * 0.18, mainSize * 0.75);
+  const floorY = baseFloorY + 10;
+  const unitY = Math.max(24, (baseFloorY - mainSize * 0.35) / 8.5);
+  const launchY = -5 - 10 / unitY;
   const launch = { left: [-5, -3], right: [3, 5] };
   const land = { left: [-10, -2], right: [2, 10] };
 
@@ -463,9 +705,10 @@ function createLaunchedBallLayer(completedDraws) {
     const side = secureRandomInt(2) ? "right" : "left";
     const x0 = randomFloat(...launch[side]);
     const x1 = randomFloat(...land[side]);
-    const apex = randomFloat(5, 8);
-    const vy0 = Math.sqrt(2 * gravity * (apex - launchY));
-    const duration = (2 * vy0) / gravity;
+    const boostedArc = secureRandomInt(10) === 0;
+    const apex = randomFloat(5, 8) * (boostedArc ? 1.2 : 1);
+    const vy0 = Math.sqrt(2 * gravity * (apex - launchY)) * (boostedArc ? 1.1 : 1);
+    const duration = ((vy0 + Math.sqrt(Math.max(0, vy0 * vy0 + 2 * gravity * -launchY))) / gravity) * 1.18;
     const baseShrink = randomFloat(0.05, 0.15);
     const extraShrink = randomFloat(0.05, 0.15);
     const size = mainSize * (1 - baseShrink) * (1 - extraShrink);
@@ -481,8 +724,8 @@ function createLaunchedBallLayer(completedDraws) {
       vy: vy0,
       apex,
       duration,
-      delay: randomFloat(0.35, 1.9),
-      speedBase: randomFloat(1.05, 1.1),
+      delay: randomFloat(0.35, 2.65),
+      speedBase: randomFloat(1.72, 1.88) * (boostedArc ? 1.08 : 1),
       spinRps: randomFloat(0.3, 1),
       spinDirection: secureRandomInt(2) ? 1 : -1,
       elapsed: 0,
@@ -502,10 +745,9 @@ function createLaunchedBallLayer(completedDraws) {
     ball.style.setProperty("--launched-letter-size", `${Math.max(11, size * 0.12)}px`);
     ball.style.setProperty("--launched-number-size", `${Math.max(26, size * 0.33)}px`);
     ball.style.setProperty("--launched-number-padding", `${Math.max(10, size * 0.16)}px`);
-    ball.style.setProperty("--launched-blur", `${depth * 0.7}px`);
-    ball.style.setProperty("--launched-shade", String(0.28 + depth * 0.28));
-    ball.style.setProperty("--launched-edge-shade", String(0.46 + depth * 0.24));
-    ball.style.setProperty("--launched-brightness", String(0.9 - depth * 0.12));
+    ball.style.setProperty("--launched-shade", String(0.10 + depth * 0.08));
+    ball.style.setProperty("--launched-edge-shade", String(0.18 + depth * 0.08));
+    ball.style.setProperty("--launched-brightness", String(0.97 - depth * 0.035));
     ball.style.zIndex = String(3 - Math.round(depth * 2));
     ball.style.transform = ballTransform(x0, launchY, item);
     layer.appendChild(ball);
@@ -529,7 +771,7 @@ function createLaunchedBallLayer(completedDraws) {
           item.ball.style.visibility = "visible";
         }
         const heightRatio = item.apex > launchY ? clamp((item.y - launchY) / (item.apex - launchY), 0, 1) : 0;
-        const heightDrag = 0.42 + 3.15 * Math.pow(1 - heightRatio, 1.55);
+        const heightDrag = 1.10 + 0.55 * Math.pow(1 - heightRatio, 1.0);
         item.elapsed = Math.min(item.duration, item.elapsed + frameSeconds * item.speedBase * heightDrag);
         item.spinSeconds += frameSeconds;
         item.done = item.elapsed >= item.duration;
@@ -552,62 +794,186 @@ function createLaunchedBallLayer(completedDraws) {
 
 function stopDrawCycle() {
   if (state.drawCycleTimer) {
-    window.clearTimeout(state.drawCycleTimer);
+    cancelAnimationFrame(state.drawCycleTimer);
     state.drawCycleTimer = null;
   }
+  state.drawRollRunId += 1;
+  stopDrawDots();
+  resetDrawMotion();
   stopLaunchedBallAnimation();
 }
 
-function startNumberCycle(availableNumbers) {
+function candidateNumbersWithout(finalNumber, availableNumbers = state.pool) {
+  const visualPool = availableNumbers.filter((number) => number !== finalNumber);
+  if (visualPool.length) return visualPool;
+  return Array.from({ length: 75 }, (_, index) => index + 1).filter((number) => number !== finalNumber);
+}
+
+function chooseDifferentCycleNumber(finalNumber, availableNumbers = state.pool) {
+  const pool = candidateNumbersWithout(finalNumber, availableNumbers);
+  return pool.length ? pool[secureRandomInt(pool.length)] : null;
+}
+
+function buildNumberCycleSequence(totalTicks, terminalNumber, availableNumbers) {
+  const poolBase = candidateNumbersWithout(terminalNumber, availableNumbers);
+  const sequence = new Array(totalTicks);
+  let previous = null;
+
+  for (let index = 0; index < totalTicks - 1; index += 1) {
+    const avoidTerminalNearEnd = index >= totalTicks - 4;
+    const pool = poolBase.filter(
+      (number) => number !== previous && (!avoidTerminalNearEnd || number !== terminalNumber)
+    );
+    const fallback = pool.length ? pool : poolBase;
+    const number = fallback.length ? fallback[secureRandomInt(fallback.length)] : terminalNumber;
+    sequence[index] = number;
+    previous = number;
+  }
+
+  sequence[totalTicks - 1] = terminalNumber;
+  return sequence;
+}
+
+function buildRollTickOffsets(totalTicks, durationMs) {
+  const offsets = new Array(totalTicks);
+  const transitions = totalTicks - 1;
+  const weights = new Array(transitions);
+  let totalWeight = 0;
+
+  offsets[0] = 0;
+
+  for (let step = 0; step < transitions; step += 1) {
+    const progress = step / Math.max(1, transitions - 1);
+    const weight = 0.92 + Math.pow(progress, 3.05) * 4.55;
+    weights[step] = weight;
+    totalWeight += weight;
+  }
+
+  let elapsed = 0;
+  for (let step = 0; step < transitions; step += 1) {
+    elapsed += (weights[step] / totalWeight) * durationMs;
+    offsets[step + 1] = elapsed;
+  }
+
+  offsets[totalTicks - 1] = durationMs;
+  return offsets;
+}
+
+function tickFromElapsed(elapsedMs, offsets) {
+  let low = 0;
+  let high = offsets.length - 1;
+
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (offsets[mid] <= elapsedMs) low = mid;
+    else high = mid - 1;
+  }
+
+  return low;
+}
+
+function startNumberCycle(finalNumber, availableNumbers) {
+  const runId = ++state.drawRollRunId;
+  const shouldFakeOut = Math.random() < DRAW_FAKE_OUT_CHANCE;
+  const sequence = buildNumberCycleSequence(DRAW_ROLL_TICKS, finalNumber, availableNumbers);
+  const tickOffsets = buildRollTickOffsets(DRAW_ROLL_TICKS, DRAW_ROLL_TIMING.rouletteDuration);
+  const suspenseDuration = shouldFakeOut
+    ? randomFloat(DRAW_ROLL_TIMING.fakeOutSuspenseMin, DRAW_ROLL_TIMING.fakeOutSuspenseMax)
+    : randomFloat(DRAW_ROLL_TIMING.suspenseMin, DRAW_ROLL_TIMING.suspenseMax);
   const startedAt = performance.now();
-  let tick = 0;
+  const settleAt = DRAW_ROLL_TIMING.rouletteStart + DRAW_ROLL_TIMING.rouletteDuration;
+  const revealAt = settleAt + suspenseDuration;
+  let lastTick = -1;
+  let settled = false;
 
-  const cycle = () => {
-    const elapsed = performance.now() - startedAt;
-    const progress = Math.min(elapsed / DRAW_SUSPENSE_MS, 1);
-    const number = chooseCycleNumber(availableNumbers);
-    if (number) renderBallCandidate(number);
+  return new Promise((resolve) => {
+    const cycle = (now) => {
+      if (runId !== state.drawRollRunId || !state.drawAnimating) {
+        state.drawCycleTimer = null;
+        resolve({ completed: false, fakeOut: false, settleNumber: null });
+        return;
+      }
 
-    if (progress >= 1 || !state.drawAnimating) {
-      state.drawCycleTimer = null;
-      return;
-    }
+      const elapsed = now - startedAt;
 
-    tick += 1;
-    const interval = 150 + Math.pow(progress, 2.8) * 780 + Math.min(tick, 12) * 5;
-    state.drawCycleTimer = window.setTimeout(cycle, interval);
-  };
+      if (elapsed >= DRAW_ROLL_TIMING.rouletteStart && !settled) {
+        const rouletteElapsed = Math.min(
+          elapsed - DRAW_ROLL_TIMING.rouletteStart,
+          DRAW_ROLL_TIMING.rouletteDuration
+        );
+        const tick = tickFromElapsed(rouletteElapsed, tickOffsets);
+        if (tick !== lastTick) {
+          lastTick = tick;
+          const nextOffset = tickOffsets[Math.min(tick + 1, tickOffsets.length - 1)] ?? DRAW_ROLL_TIMING.rouletteDuration;
+          const stepMs = Math.max(90, nextOffset - tickOffsets[tick]);
+          const progress = rouletteElapsed / DRAW_ROLL_TIMING.rouletteDuration;
+          renderBallCandidate(sequence[tick]);
+          applyDrawTickMotion(progress, tick, stepMs);
+        }
+      }
 
-  cycle();
+      if (!settled && elapsed >= settleAt) {
+        settled = true;
+        resetDrawMotion();
+      }
+
+      if (elapsed >= revealAt) {
+        state.drawCycleTimer = null;
+        resolve({ completed: true, fakeOut: shouldFakeOut, settleNumber: finalNumber });
+        return;
+      }
+
+      state.drawCycleTimer = requestAnimationFrame(cycle);
+    };
+
+    state.drawCycleTimer = requestAnimationFrame(cycle);
+  });
 }
 
 function beginDrawSuspense(completedDraws) {
   stopDrawCycle();
+  stopResultIdleEffects();
   state.drawAnimating = true;
   els.resultHero.classList.add("is-draw-active");
-  els.ball.classList.add("is-randomizing");
+  els.ball.classList.remove("is-idle", "is-drawing", "is-revealing", "has-result", "hover-kick", "hover-exit", "is-fake-out-hold", "is-fake-out-resolve");
+  els.ball.classList.add("is-randomizing", "is-draw-starting");
+  els.resultText.textContent = "?-??";
+  els.resultText.classList.add("is-randomizing-result");
+  startDrawDots();
+  window.setTimeout(() => els.ball.classList.remove("is-draw-starting"), 160);
   createLaunchedBallLayer(completedDraws);
-  startNumberCycle(state.pool);
 }
 
-async function revealDrawResult({ finalNumber, finalEventIndex }) {
+async function revealDrawResult({ finalNumber, finalEventIndex, fakeOut = false }) {
   stopDrawCycle();
 
   const segment = getSegment(finalNumber);
   if (segment) {
-    els.ball.className = `bingo-ball is-revealing ${segment.theme}`;
+    resetDrawMotion();
+    els.ball.className = `bingo-ball is-idle has-result ${fakeOut ? "is-fake-out-resolve" : ""} ${segment.theme}`;
     els.ball.style.background = segment.color;
+    els.ball.style.filter = "";
     els.ballLetter.textContent = segment.letter;
     els.ballNumber.textContent = finalNumber;
+    stopDrawDots();
     els.resultText.textContent = formatResult(finalNumber);
-    els.segmentLabel.textContent = "Número confirmado";
+    els.resultText.classList.remove("is-randomizing-result");
+    els.segmentLabel.textContent = `Segmento ${segment.letter} · ${segment.min}-${segment.max}`;
+    els.resultHero.classList.remove("is-draw-active");
+    els.resultHero.querySelector(".launched-ball-layer")?.remove();
+    state.drawAnimating = false;
     burstConfetti(segment.color);
-  }
+    startResultIdleEffects(segment.color);
 
-  await sleep(DRAW_REVEAL_SETTLE_MS);
-  els.resultHero.classList.remove("is-draw-active");
-  els.resultHero.querySelector(".launched-ball-layer")?.remove();
-  state.drawAnimating = false;
+    if (fakeOut) {
+      window.setTimeout(() => els.ball.classList.remove("is-fake-out-resolve"), 390);
+    }
+  } else {
+    stopDrawDots();
+    els.resultHero.classList.remove("is-draw-active");
+    els.resultHero.querySelector(".launched-ball-layer")?.remove();
+    state.drawAnimating = false;
+  }
 }
 
 async function drawNextNumber() {
@@ -628,23 +994,37 @@ async function drawNextNumber() {
 
   try {
     beginDrawSuspense(completedDraws);
-    const [{ data, error }] = await Promise.all([
-      rpcPromise,
-      sleep(DRAW_SUSPENSE_MS),
-    ]);
+    const { data, error } = await rpcPromise;
     if (error) throw error;
 
     const row = firstRpcRow(data);
+    const finalNumber = Number(row.number);
+    const rollResult = await startNumberCycle(finalNumber, state.pool);
+    if (!rollResult.completed) {
+      stopDrawDots();
+      state.drawAnimating = false;
+      els.resultHero.classList.remove("is-draw-active");
+      els.resultHero.querySelector(".launched-ball-layer")?.remove();
+      return;
+    }
     await revealDrawResult({
-      finalNumber: Number(row.number),
+      finalNumber,
       finalEventIndex: Number(row.event_index),
+      fakeOut: rollResult.fakeOut,
     });
-    await loadLobbyState(state.lobby.lobby_code, { animateLatest: false, allowDuringDraw: true });
+    await loadLobbyState(state.lobby.lobby_code, {
+      animateLatest: false,
+      allowDuringDraw: true,
+      preserveCurrentBall: true,
+    });
   } catch (error) {
     stopDrawCycle();
+    stopResultIdleEffects();
+    stopDrawDots();
     state.drawAnimating = false;
     els.resultHero.classList.remove("is-draw-active");
     els.resultHero.querySelector(".launched-ball-layer")?.remove();
+    els.resultText.classList.remove("is-randomizing-result");
     setStatus(error.message || "No se pudo sacar número", true);
     renderCurrentBall(false);
     render();
@@ -689,6 +1069,7 @@ function returnToLobbySelector() {
   state.subscribedDrawId = null;
   stopDrawCycle();
   state.drawCycleTimer = null;
+  state.drawRollRunId += 1;
   state.launchedBallAnimationId = null;
   state.flyingBalls = [];
 
@@ -696,7 +1077,7 @@ function returnToLobbySelector() {
   els.sessionPanel.hidden = true;
   els.resetButton.hidden = true;
   els.lobbyOverlay.hidden = false;
-  els.appTitle.textContent = "Bingo Online 2026 - Rotary Club Rukapillán";
+  renderLobbyTitle("");
   els.lobbyCodeLabel.textContent = "------";
   els.joinCodeInput.focus();
   setIdleBall("¡Presiona la bola para sortear!");
@@ -710,6 +1091,7 @@ async function closeAndStartNewDraw() {
   if (!confirm("¿Cerrar este sorteo y comenzar un nuevo sorteo? El sorteo cerrado quedará inmutable.")) return;
 
   els.resetButton.disabled = true;
+  setResettingDrawVisual(true);
   setStatus("Cerrando sorteo y creando nuevo sorteo…");
   const { data, error } = await supabaseClient.rpc("close_draw_and_create_new", {
     p_lobby_id: state.lobby.id,
@@ -721,6 +1103,7 @@ async function closeAndStartNewDraw() {
     console.error("close_draw_and_create_new failed", error);
     setStatus(message, true);
     alert(message);
+    setResettingDrawVisual(false);
     render();
     return;
   }
@@ -732,6 +1115,7 @@ async function closeAndStartNewDraw() {
   state.lastRenderedNumber = null;
   state.lastRenderedDrawSignature = "";
   await loadLobbyState(code);
+  setResettingDrawVisual(false);
   startHostLockRenewal();
 }
 
@@ -772,7 +1156,9 @@ function subscribeToLobby(drawId) {
       table: "lobbies",
       filter: `id=eq.${state.lobby.id}`,
     }, (payload) => {
-      if (!payload?.new || payload.new.active_draw_id !== state.draw?.id) reload();
+      const next = payload?.new || {};
+      const previous = payload?.old || {};
+      if (!payload?.new || next.active_draw_id !== state.draw?.id || next.name !== previous.name) reload();
     })
     .subscribe((status) => {
       if (status === "SUBSCRIBED") setStatus(state.mode === "host" ? `Sala activa ${state.lobby.lobby_code}` : "Espectador. Esperando nuevo número…");
@@ -931,22 +1317,38 @@ function applyHeroScale() {
   }
 }
 
+let hoverSettleTimer = null;
+
 function randomizeBallHover() {
   if (state.drawAnimating) return;
-  const rotation = 10 + secureRandomInt(501) / 100;
-  const rebound = secureRandomInt(301) / 100;
+  if (hoverSettleTimer) {
+    window.clearTimeout(hoverSettleTimer);
+    hoverSettleTimer = null;
+  }
+  const rotation = 9.5 + secureRandomInt(451) / 100;
+  const rebound = 0.25 + secureRandomInt(86) / 100;
   els.ball.style.setProperty("--hover-rotation", `${rotation}deg`);
   els.ball.style.setProperty("--hover-rebound", `${rebound}deg`);
-  els.ball.classList.remove("hover-kick");
+  els.ball.classList.remove("hover-kick", "hover-exit");
   void els.ball.offsetWidth;
   els.ball.classList.add("hover-kick");
+}
+
+function settleBallHover() {
+  if (state.drawAnimating) return;
+  if (hoverSettleTimer) window.clearTimeout(hoverSettleTimer);
+  els.ball.classList.remove("hover-kick");
+  els.ball.classList.add("hover-exit");
+  hoverSettleTimer = window.setTimeout(() => {
+    els.ball.classList.remove("hover-exit");
+    hoverSettleTimer = null;
+  }, 640);
 }
 
 els.createLobbyForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
-    await createLobby(els.lobbyNameInput.value, els.hostPasswordInput.value);
-    els.hostPasswordInput.value = "";
+    await createLobby(els.lobbyNameInput.value);
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -961,20 +1363,33 @@ els.joinLobbyForm.addEventListener("submit", async (event) => {
   }
 });
 
-els.claimHostForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (!state.lobby) return;
-  try {
-    await claimHost(state.lobby.lobby_code, els.claimPasswordInput.value);
-    els.claimPasswordInput.value = "";
-  } catch (error) {
-    setStatus(error.message, true);
-  }
-});
+if (els.claimHostForm) {
+  els.claimHostForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.lobby) return;
+    try {
+      await claimHost(state.lobby.lobby_code);
+    } catch (error) {
+      setStatus(error.message, true);
+    }
+  });
+}
+
+if (els.renameLobbyForm) {
+  els.renameLobbyForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.lobby || state.mode !== "host") return;
+    try {
+      await updateLobbyName(els.lobbyNameEditInput.value);
+    } catch (error) {
+      setStatus(friendlyErrorMessage(error, "No se pudo cambiar el nombre de la sala."), true);
+    }
+  });
+}
 
 if (els.drawButton) els.drawButton.addEventListener("click", drawNextNumber);
 els.ball.addEventListener("mouseenter", randomizeBallHover);
-els.ball.addEventListener("mouseleave", () => els.ball.classList.remove("hover-kick"));
+els.ball.addEventListener("mouseleave", settleBallHover);
 els.ball.addEventListener("click", drawFromBall);
 els.ball.addEventListener("keydown", drawFromBall);
 els.resetButton.addEventListener("click", closeAndStartNewDraw);
@@ -986,6 +1401,7 @@ window.addEventListener("resize", resizeConfettiCanvas);
 window.createLobby = createLobby;
 window.joinLobby = joinLobby;
 window.claimHost = claimHost;
+window.updateLobbyName = updateLobbyName;
 window.drawNextNumber = drawNextNumber;
 window.closeAndStartNewDraw = closeAndStartNewDraw;
 window.getLaunchedBallCount = getLaunchedBallCount;
