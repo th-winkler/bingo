@@ -28,7 +28,7 @@ const state = {
   drawAnimating: false,
   drawCycleTimer: null,
   launchedBallAnimationId: null,
-  launchedProjectiles: [],
+  flyingBalls: [],
 };
 
 const els = {
@@ -424,7 +424,7 @@ function stopLaunchedBallAnimation({ removeLayer = false } = {}) {
     cancelAnimationFrame(state.launchedBallAnimationId);
     state.launchedBallAnimationId = null;
   }
-  state.launchedProjectiles = [];
+  state.flyingBalls = [];
   if (removeLayer) els.resultHero.querySelector(".launched-ball-layer")?.remove();
 }
 
@@ -440,104 +440,91 @@ function createLaunchedBallLayer(completedDraws) {
   els.resultHero.appendChild(layer);
 
   const bounds = els.resultHero.getBoundingClientRect();
-  const ballSize = clamp(bounds.width * 0.095, 74, 126);
-  const baseline = Math.max(ballSize * 0.62, bounds.height - ballSize * 0.72);
-  const xScale = bounds.width / 20;
-  const yScale = Math.max(24, (baseline - ballSize * 0.52) / 8);
+  const mainRect = els.ball.getBoundingClientRect();
+  const mainSize = clamp(mainRect.width || bounds.width * 0.19, 120, 260);
+  const unitX = bounds.width / 20;
   const gravity = 9.81;
-  const groundAccelerationBoost = 1.45;
-  const launchZones = {
-    left: { min: -5, max: -3 },
-    right: { min: 3, max: 5 },
-  };
-  const fallZones = {
-    left: { min: -10, max: -2 },
-    right: { min: 2, max: 10 },
-  };
+  const floorY = Math.max(mainSize * 0.58, bounds.height - mainSize * 0.42);
+  const unitY = Math.max(22, (floorY - mainSize * 0.62) / 8);
+  const launch = { left: [-5, -3], right: [3, 5] };
+  const land = { left: [-10, -2], right: [2, 10] };
 
-  state.launchedProjectiles = Array.from({ length: count }, (_, index) => {
+  const toScreenX = (x, size) => bounds.width / 2 + x * unitX - size / 2;
+  const toScreenY = (y, size) => floorY - y * unitY - size / 2;
+
+  state.flyingBalls = Array.from({ length: count }, (_, index) => {
     const number = chooseCycleNumber(state.pool) || index + 1;
     const segment = getSegment(number) || SEGMENTS[index % SEGMENTS.length];
     const side = secureRandomInt(2) ? "right" : "left";
-    const xStart = randomFromZone(launchZones[side]);
-    const xEnd = randomFromZone(fallZones[side]);
-    const hMax = randomFloat(5, 8);
-    const vy0 = Math.sqrt(2 * gravity * hMax);
-    const tFlight = (2 * vy0) / gravity;
-    const vx0 = (xEnd - xStart) / tFlight;
-    const delay = randomFloat(0.5, 2.5);
+    const x0 = randomFloat(...launch[side]);
+    const x1 = randomFloat(...land[side]);
+    const apex = randomFloat(5, 8);
+    const vy0 = Math.sqrt(2 * gravity * apex);
+    const duration = (2 * vy0) / gravity;
+    const shrink = randomFloat(0.05, 0.15);
+    const depth = (shrink - 0.05) / 0.1;
+    const size = mainSize * (1 - shrink);
     const ball = document.createElement("span");
 
     ball.className = `launched-ball ${segment.theme}`;
     ball.innerHTML = `
       <span class="launched-letter">${segment.letter}</span>
       <strong class="launched-number">${number}</strong>
-      <span class="launched-cross" aria-hidden="true"></span>
     `;
     ball.style.setProperty("--ball-color", segment.color);
-    ball.style.setProperty("--projectile-size", `${ballSize}px`);
+    ball.style.setProperty("--launched-size", `${size}px`);
+    ball.style.setProperty("--launched-border", `${Math.max(5, size * 0.055)}px`);
+    ball.style.setProperty("--launched-letter-size", `${Math.max(12, size * 0.12)}px`);
+    ball.style.setProperty("--launched-number-size", `${Math.max(30, size * 0.33)}px`);
+    ball.style.setProperty("--launched-number-padding", `${Math.max(12, size * 0.16)}px`);
+    ball.style.setProperty("--launched-blur", `${depth * 0.9}px`);
+    ball.style.setProperty("--launched-shade", String(0.22 + depth * 0.18));
+    ball.style.zIndex = String(3 - Math.round(depth * 2));
     layer.appendChild(ball);
 
     return {
       ball,
-      xStart,
-      vx0,
-      vy0,
-      hMax,
-      tFlight,
-      delay,
-      simTime: 0,
-      active: false,
-      finished: false,
-      spinRps: randomFloat(0.3, 1),
-      spinDirection: secureRandomInt(2) ? 1 : -1,
-      lastX: xStart,
-      lastY: 0,
+      size,
+      x0,
+      y: 0,
+      vx: (x1 - x0) / duration,
+      vy: vy0,
+      apex,
+      duration,
+      delay: randomFloat(0.5, 2.5),
+      opacity: 0.9 - depth * 0.22,
+      elapsed: 0,
+      done: false,
     };
   });
 
-  const worldToScreenX = (x) => bounds.width / 2 + x * xScale - ballSize / 2;
-  const worldToScreenY = (y) => baseline - y * yScale - ballSize / 2;
   const startedAt = performance.now();
-  let lastFrameAt = startedAt;
+  let previousFrameAt = startedAt;
 
   const animate = (now) => {
-    const elapsedRealTime = (now - startedAt) / 1000;
-    const frameDelta = Math.min((now - lastFrameAt) / 1000, 0.05);
-    lastFrameAt = now;
-    let allFinished = true;
+    const realElapsed = (now - startedAt) / 1000;
+    const frameSeconds = Math.min((now - previousFrameAt) / 1000, 0.05);
+    previousFrameAt = now;
+    let finished = true;
 
-    for (const projectile of state.launchedProjectiles) {
-      if (!projectile.finished && elapsedRealTime >= projectile.delay) {
-        projectile.active = true;
-        const currentHeightRatio = projectile.hMax > 0
-          ? clamp(projectile.lastY / projectile.hMax, 0, 1)
-          : 0;
-        const nearGroundRatio = 1 - currentHeightRatio;
-        const speedMultiplier = 1 + groundAccelerationBoost * nearGroundRatio;
-        projectile.simTime += frameDelta * speedMultiplier;
+    for (const item of state.flyingBalls) {
+      if (!item.done && realElapsed >= item.delay) {
+        const heightRatio = item.apex > 0 ? clamp(item.y / item.apex, 0, 1) : 0;
+        const speed = 1 + 1.35 * (1 - heightRatio);
+        item.elapsed = Math.min(item.duration, item.elapsed + frameSeconds * speed);
+        item.done = item.elapsed >= item.duration;
 
-        if (projectile.simTime >= projectile.tFlight) {
-          projectile.simTime = projectile.tFlight;
-          projectile.finished = true;
-        }
-
-        projectile.lastX = projectile.xStart + projectile.vx0 * projectile.simTime;
-        projectile.lastY = Math.max(0, projectile.vy0 * projectile.simTime - 0.5 * gravity * projectile.simTime * projectile.simTime);
-        const spinAngle = projectile.spinDirection * 360 * projectile.spinRps * projectile.simTime;
-        projectile.ball.style.opacity = "1";
-        projectile.ball.style.transform = `translate3d(${worldToScreenX(projectile.lastX)}px, ${worldToScreenY(projectile.lastY)}px, 0)`;
-        projectile.ball.style.setProperty("--spin-angle", `${spinAngle}deg`);
+        const x = item.x0 + item.vx * item.elapsed;
+        item.y = Math.max(0, item.vy * item.elapsed - 0.5 * gravity * item.elapsed * item.elapsed);
+        item.ball.style.opacity = String(item.opacity);
+        item.ball.style.transform = `translate3d(${toScreenX(x, item.size)}px, ${toScreenY(item.y, item.size)}px, 0)`;
       }
-
-      if (!projectile.finished) allFinished = false;
+      if (!item.done) finished = false;
     }
 
-    if (!allFinished && state.drawAnimating) {
-      state.launchedBallAnimationId = requestAnimationFrame(animate);
-    } else {
-      state.launchedBallAnimationId = null;
-    }
+    state.launchedBallAnimationId = !finished && state.drawAnimating
+      ? requestAnimationFrame(animate)
+      : null;
   };
 
   state.launchedBallAnimationId = requestAnimationFrame(animate);
@@ -684,7 +671,7 @@ function returnToLobbySelector() {
   stopDrawCycle();
   state.drawCycleTimer = null;
   state.launchedBallAnimationId = null;
-  state.launchedProjectiles = [];
+  state.flyingBalls = [];
 
   history.replaceState(null, "", `${location.pathname}${location.search}`);
   els.sessionPanel.hidden = true;
@@ -919,17 +906,6 @@ function applyHeroScale() {
     "--hero-copy-min": `${1.65 * scale}rem`,
     "--hero-copy-fluid": `${3 * scale}vw`,
     "--hero-copy-max": `${2.8 * scale}rem`,
-    "--launched-ball-min": `${86 * scale}px`,
-    "--launched-ball-fluid": `${8.8 * scale}vw`,
-    "--launched-ball-max": `${128 * scale}px`,
-    "--launched-ball-border": `${7 * scale}px`,
-    "--launched-letter-min": `${0.88 * scale}rem`,
-    "--launched-letter-fluid": `${1.4 * scale}vw`,
-    "--launched-letter-max": `${1.25 * scale}rem`,
-    "--launched-number-padding": `${20 * scale}px`,
-    "--launched-number-min": `${2.1 * scale}rem`,
-    "--launched-number-fluid": `${3.6 * scale}vw`,
-    "--launched-number-max": `${3.35 * scale}rem`,
   };
   for (const [name, value] of Object.entries(vars)) {
     els.resultHero.style.setProperty(name, String(value));

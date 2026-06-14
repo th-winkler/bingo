@@ -725,9 +725,9 @@ td {
   top: 0;
   display: grid;
   place-items: center;
-  width: var(--projectile-size, clamp(var(--launched-ball-min, 86px), var(--launched-ball-fluid, 8.8vw), var(--launched-ball-max, 128px)));
+  width: var(--launched-size, clamp(86px, 8.8vw, 128px));
   aspect-ratio: 1;
-  border: var(--launched-ball-border, 7px) solid rgba(255, 255, 255, 0.72);
+  border: var(--launched-border, 7px) solid rgba(255, 255, 255, 0.72);
   border-radius: 50%;
   color: #fff;
   background: var(--ball-color);
@@ -737,52 +737,28 @@ td {
     0 18px 38px rgba(0, 0, 0, 0.34);
   font-weight: 900;
   opacity: 0;
+  filter: blur(var(--launched-blur, 0));
   transform: translate3d(0, 0, 0);
-  will-change: transform, opacity;
+  will-change: transform, opacity, filter;
 }
 
 .launched-ball::after {
-  background: rgba(0, 0, 0, 0.30);
+  background: rgba(0, 0, 0, var(--launched-shade, 0.30));
 }
 
 .launched-letter {
   position: absolute;
   top: 14%;
-  font-size: clamp(var(--launched-letter-min, 0.88rem), var(--launched-letter-fluid, 1.4vw), var(--launched-letter-max, 1.25rem));
+  font-size: var(--launched-letter-size, clamp(0.88rem, 1.4vw, 1.25rem));
   opacity: 0.88;
 }
 
 .launched-number {
   padding-top: var(--launched-number-padding, 20px);
-  font-size: clamp(var(--launched-number-min, 2.1rem), var(--launched-number-fluid, 3.6vw), var(--launched-number-max, 3.35rem));
+  font-size: var(--launched-number-size, clamp(2.1rem, 3.6vw, 3.35rem));
   line-height: 1;
 }
 
-.launched-cross {
-  position: absolute;
-  inset: 29%;
-  z-index: 4;
-  opacity: 0.82;
-  transform: rotate(var(--spin-angle, 0deg));
-  will-change: transform;
-}
-
-.launched-cross::before,
-.launched-cross::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 100%;
-  height: 2px;
-  border-radius: 999px;
-  background: rgba(17, 17, 17, 0.92);
-  transform: translate(-50%, -50%);
-}
-
-.launched-cross::after {
-  transform: translate(-50%, -50%) rotate(90deg);
-}
 
 @keyframes ballHoverKick {
   0% { transform: translateY(0) rotate(0deg); }
