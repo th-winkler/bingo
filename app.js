@@ -27,6 +27,8 @@ const state = {
   loadingState: false,
   drawAnimating: false,
   drawCycleTimer: null,
+  launchedBallAnimationId: null,
+  launchedProjectiles: [],
 };
 
 const els = {
@@ -405,48 +407,140 @@ function renderBallCandidate(number) {
   els.segmentLabel.textContent = `Sorteando ${ordinalDrawLabel(state.drawn.length + 1)} número...`;
 }
 
+function randomFloat(min, max) {
+  return min + (secureRandomInt(1000000) / 1000000) * (max - min);
+}
+
+function randomFromZone(zone) {
+  return randomFloat(zone.min, zone.max);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function stopLaunchedBallAnimation({ removeLayer = false } = {}) {
+  if (state.launchedBallAnimationId) {
+    cancelAnimationFrame(state.launchedBallAnimationId);
+    state.launchedBallAnimationId = null;
+  }
+  state.launchedProjectiles = [];
+  if (removeLayer) els.resultHero.querySelector(".launched-ball-layer")?.remove();
+}
+
 function createLaunchedBallLayer(completedDraws) {
-  els.resultHero.querySelector(".launched-ball-layer")?.remove();
+  stopLaunchedBallAnimation({ removeLayer: true });
+
   const count = getLaunchedBallCount(completedDraws);
+  if (count <= 0) return null;
+
   const layer = document.createElement("div");
   layer.className = "launched-ball-layer";
   layer.setAttribute("aria-hidden", "true");
+  els.resultHero.appendChild(layer);
 
-  for (let index = 0; index < count; index += 1) {
+  const bounds = els.resultHero.getBoundingClientRect();
+  const ballSize = clamp(bounds.width * 0.095, 74, 126);
+  const baseline = Math.max(ballSize * 0.62, bounds.height - ballSize * 0.72);
+  const xScale = bounds.width / 20;
+  const yScale = Math.max(24, (baseline - ballSize * 0.52) / 8);
+  const gravity = 9.81;
+  const groundAccelerationBoost = 1.45;
+  const launchZones = {
+    left: { min: -5, max: -3 },
+    right: { min: 3, max: 5 },
+  };
+  const fallZones = {
+    left: { min: -10, max: -2 },
+    right: { min: 2, max: 10 },
+  };
+
+  state.launchedProjectiles = Array.from({ length: count }, (_, index) => {
     const number = chooseCycleNumber(state.pool) || index + 1;
     const segment = getSegment(number) || SEGMENTS[index % SEGMENTS.length];
+    const side = secureRandomInt(2) ? "right" : "left";
+    const xStart = randomFromZone(launchZones[side]);
+    const xEnd = randomFromZone(fallZones[side]);
+    const hMax = randomFloat(5, 8);
+    const vy0 = Math.sqrt(2 * gravity * hMax);
+    const tFlight = (2 * vy0) / gravity;
+    const vx0 = (xEnd - xStart) / tFlight;
+    const delay = randomFloat(0.5, 2.5);
     const ball = document.createElement("span");
+
     ball.className = `launched-ball ${segment.theme}`;
-    ball.innerHTML = `<span class="launched-letter">${segment.letter}</span><strong class="launched-number">${number}</strong>`;
+    ball.innerHTML = `
+      <span class="launched-letter">${segment.letter}</span>
+      <strong class="launched-number">${number}</strong>
+      <span class="launched-cross" aria-hidden="true"></span>
+    `;
     ball.style.setProperty("--ball-color", segment.color);
-    ball.style.setProperty("--delay", `${index * 0.22 + secureRandomInt(12) / 100}s`);
-    ball.style.setProperty("--duration", `${3.35 + secureRandomInt(62) / 100}s`);
-    ball.style.setProperty("--start-y", `${76 + secureRandomInt(18)}%`);
-    ball.style.setProperty("--peak-y", `${30 + secureRandomInt(22)}%`);
-    const drift = secureRandomInt(126) - 63;
-    ball.style.setProperty("--drift", `${drift}px`);
-    ball.style.setProperty("--late-drift", `${drift * -0.38}px`);
-    ball.style.setProperty("--end-drift", `${drift * 0.55}px`);
-    ball.style.setProperty("--arc-push", `${secureRandomInt(54) - 27}px`);
-    const startRotation = secureRandomInt(31) - 10;
-    const reduction = secureRandomInt(10) === 0 ? secureRandomInt(11) : secureRandomInt(4);
-    const spinSpeed = startRotation - reduction;
-    const durationSeconds = 3.35 + secureRandomInt(62) / 100;
-    ball.style.setProperty("--duration", `${durationSeconds}s`);
-    ball.style.setProperty("--start-rotation", `${startRotation}deg`);
-    ball.style.setProperty("--mid-rotation", `${startRotation + spinSpeed * durationSeconds * 0.52}deg`);
-    ball.style.setProperty("--late-rotation", `${startRotation + spinSpeed * durationSeconds * 0.78}deg`);
-    ball.style.setProperty("--end-rotation", `${startRotation + spinSpeed * durationSeconds}deg`);
-
-    const lanePositions = count <= 1
-      ? [18]
-      : [12, 24, 72, 84, 7].slice(0, count);
-    const lane = lanePositions[index] ?? (index % 2 ? 82 : 18);
-    ball.style.left = `${Math.max(6, Math.min(88, lane + secureRandomInt(8) - 4))}%`;
+    ball.style.setProperty("--projectile-size", `${ballSize}px`);
     layer.appendChild(ball);
-  }
 
-  els.resultHero.appendChild(layer);
+    return {
+      ball,
+      xStart,
+      vx0,
+      vy0,
+      hMax,
+      tFlight,
+      delay,
+      simTime: 0,
+      active: false,
+      finished: false,
+      spinRps: randomFloat(0.3, 1),
+      spinDirection: secureRandomInt(2) ? 1 : -1,
+      lastX: xStart,
+      lastY: 0,
+    };
+  });
+
+  const worldToScreenX = (x) => bounds.width / 2 + x * xScale - ballSize / 2;
+  const worldToScreenY = (y) => baseline - y * yScale - ballSize / 2;
+  const startedAt = performance.now();
+  let lastFrameAt = startedAt;
+
+  const animate = (now) => {
+    const elapsedRealTime = (now - startedAt) / 1000;
+    const frameDelta = Math.min((now - lastFrameAt) / 1000, 0.05);
+    lastFrameAt = now;
+    let allFinished = true;
+
+    for (const projectile of state.launchedProjectiles) {
+      if (!projectile.finished && elapsedRealTime >= projectile.delay) {
+        projectile.active = true;
+        const currentHeightRatio = projectile.hMax > 0
+          ? clamp(projectile.lastY / projectile.hMax, 0, 1)
+          : 0;
+        const nearGroundRatio = 1 - currentHeightRatio;
+        const speedMultiplier = 1 + groundAccelerationBoost * nearGroundRatio;
+        projectile.simTime += frameDelta * speedMultiplier;
+
+        if (projectile.simTime >= projectile.tFlight) {
+          projectile.simTime = projectile.tFlight;
+          projectile.finished = true;
+        }
+
+        projectile.lastX = projectile.xStart + projectile.vx0 * projectile.simTime;
+        projectile.lastY = Math.max(0, projectile.vy0 * projectile.simTime - 0.5 * gravity * projectile.simTime * projectile.simTime);
+        const spinAngle = projectile.spinDirection * 360 * projectile.spinRps * projectile.simTime;
+        projectile.ball.style.opacity = "1";
+        projectile.ball.style.transform = `translate3d(${worldToScreenX(projectile.lastX)}px, ${worldToScreenY(projectile.lastY)}px, 0)`;
+        projectile.ball.style.setProperty("--spin-angle", `${spinAngle}deg`);
+      }
+
+      if (!projectile.finished) allFinished = false;
+    }
+
+    if (!allFinished && state.drawAnimating) {
+      state.launchedBallAnimationId = requestAnimationFrame(animate);
+    } else {
+      state.launchedBallAnimationId = null;
+    }
+  };
+
+  state.launchedBallAnimationId = requestAnimationFrame(animate);
   return layer;
 }
 
@@ -455,6 +549,7 @@ function stopDrawCycle() {
     window.clearTimeout(state.drawCycleTimer);
     state.drawCycleTimer = null;
   }
+  stopLaunchedBallAnimation();
 }
 
 function startNumberCycle(availableNumbers) {
@@ -586,6 +681,10 @@ function returnToLobbySelector() {
   state.lastRenderedNumber = null;
   state.lastRenderedDrawSignature = "";
   state.subscribedDrawId = null;
+  stopDrawCycle();
+  state.drawCycleTimer = null;
+  state.launchedBallAnimationId = null;
+  state.launchedProjectiles = [];
 
   history.replaceState(null, "", `${location.pathname}${location.search}`);
   els.sessionPanel.hidden = true;

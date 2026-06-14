@@ -721,10 +721,11 @@ td {
 
 .launched-ball {
   position: absolute;
-  top: var(--start-y);
+  left: 0;
+  top: 0;
   display: grid;
   place-items: center;
-  width: clamp(var(--launched-ball-min, 86px), var(--launched-ball-fluid, 8.8vw), var(--launched-ball-max, 128px));
+  width: var(--projectile-size, clamp(var(--launched-ball-min, 86px), var(--launched-ball-fluid, 8.8vw), var(--launched-ball-max, 128px)));
   aspect-ratio: 1;
   border: var(--launched-ball-border, 7px) solid rgba(255, 255, 255, 0.72);
   border-radius: 50%;
@@ -735,10 +736,9 @@ td {
     inset 12px 15px 24px rgba(255, 255, 255, 0.12),
     0 18px 38px rgba(0, 0, 0, 0.34);
   font-weight: 900;
-  opacity: 1;
-  transform: translate3d(0, 0, 0) rotate(var(--start-rotation)) scale(0.96);
-  animation: launchedBallArc var(--duration) cubic-bezier(0.16, 0.78, 0.22, 1) var(--delay) both;
-  will-change: top, transform;
+  opacity: 0;
+  transform: translate3d(0, 0, 0);
+  will-change: transform, opacity;
 }
 
 .launched-ball::after {
@@ -758,23 +758,30 @@ td {
   line-height: 1;
 }
 
-@keyframes launchedBallArc {
-  0% {
-    top: var(--start-y);
-    transform: translate3d(0, 18px, 0) rotate(var(--start-rotation)) scale(0.96);
-  }
-  36% {
-    top: var(--peak-y);
-    transform: translate3d(calc(var(--drift) + var(--arc-push)), -14px, 0) rotate(var(--mid-rotation)) scale(1.03);
-  }
-  68% {
-    top: calc(var(--peak-y) + 9%);
-    transform: translate3d(var(--late-drift), 2px, 0) rotate(var(--late-rotation)) scale(0.99);
-  }
-  100% {
-    top: var(--start-y);
-    transform: translate3d(var(--end-drift), 30px, 0) rotate(var(--end-rotation)) scale(0.94);
-  }
+.launched-cross {
+  position: absolute;
+  inset: 29%;
+  z-index: 4;
+  opacity: 0.82;
+  transform: rotate(var(--spin-angle, 0deg));
+  will-change: transform;
+}
+
+.launched-cross::before,
+.launched-cross::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(17, 17, 17, 0.92);
+  transform: translate(-50%, -50%);
+}
+
+.launched-cross::after {
+  transform: translate(-50%, -50%) rotate(90deg);
 }
 
 @keyframes ballHoverKick {
